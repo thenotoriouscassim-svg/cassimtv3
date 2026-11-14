@@ -1,0 +1,63 @@
+name: jarvis_ai
+description: JARVIS AI by CassimTV - Personal AI Voice Assistant
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # HTTP & API
+  http: ^1.1.0
+  dio: ^5.3.2
+  
+  # Audio
+  audioplayers: ^5.2.1
+  flutter_sound: ^9.2.13
+  permission_handler: ^11.0.1
+  
+  # State management
+  provider: ^6.1.1
+  
+  # Storage
+  shared_preferences: ^2.2.2
+  sqflite: ^2.3.0
+  path_provider: ^2.1.1
+  path: ^1.8.3
+  
+  # UI
+  animated_text_kit: ^4.2.2
+  fl_chart: ^0.65.0
+  google_fonts: ^6.1.0
+  lottie: ^2.7.0
+  shimmer: ^3.0.0
+  
+  # WebSocket for real-time backend comms
+  web_socket_channel: ^2.4.0
+  
+  # Utilities
+  intl: ^0.18.1
+  uuid: ^4.2.1
+  connectivity_plus: ^5.0.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/audio/
+    - assets/images/
+  
+  fonts:
+    - family: Orbitron
+      fonts:
+        - asset: assets/fonts/Orbitron-Regular.ttf
+        - asset: assets/fonts/Orbitron-Bold.ttf
+          weight: 700
