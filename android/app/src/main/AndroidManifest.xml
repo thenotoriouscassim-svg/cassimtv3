@@ -17,7 +17,6 @@
         android:label="JARVIS AI"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:banner="@mipmap/ic_launcher"
         android:theme="@style/LaunchTheme"
         android:hardwareAccelerated="true"
         android:windowSoftInputMode="adjustResize"
