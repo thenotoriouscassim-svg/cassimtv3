@@ -1,4 +1,3 @@
-
 name: Build JARVIS AI APK
 
 on:
@@ -27,6 +26,19 @@ jobs:
           flutter-version: '3.16.0'
           channel: 'stable'
 
+      # This repository was missing the Android Gradle project. Generate a
+      # clean Flutter Android scaffold without touching the Dart app or assets.
+      - name: Restore missing Android project
+        shell: bash
+        run: |
+          if [ ! -f android/app/build.gradle ] || [ ! -f android/settings.gradle ] || [ ! -f android/gradlew ]; then
+            cp android/app/src/main/AndroidManifest.xml /tmp/jarvis-custom-manifest.xml
+            rm -rf android
+            flutter create --platforms=android --org com.cassimtv --project-name jarvis_ai /tmp/jarvis_android_scaffold
+            cp -R /tmp/jarvis_android_scaffold/android ./android
+            cp /tmp/jarvis-custom-manifest.xml android/app/src/main/AndroidManifest.xml
+          fi
+
       - name: Get dependencies
         run: flutter pub get
 
@@ -42,4 +54,3 @@ jobs:
           name: jarvis-ai-release
           path: build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
-          
