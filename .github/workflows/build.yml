@@ -42,7 +42,7 @@ jobs:
             cp /tmp/jarvis-custom-manifest.xml android/app/src/main/AndroidManifest.xml
           fi
 
-      - name: Install Android SDK 34
+      - name: Install Android SDK 35
         shell: bash
         run: |
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
@@ -51,7 +51,7 @@ jobs:
             exit 1
           fi
           yes | "$SDKMANAGER" --licenses || true
-          "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0"
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Configure Android build versions
         shell: bash
@@ -60,8 +60,6 @@ jobs:
           from pathlib import Path
           import re
 
-          # Flutter 3.16's Android template declares Kotlin in the root
-          # build.gradle as ext.kotlin_version = '1.7.10'.
           root_gradle = Path("android/build.gradle")
           source = root_gradle.read_text()
           source, count = re.subn(
@@ -77,13 +75,17 @@ jobs:
 
           app_gradle = Path("android/app/build.gradle")
           source = app_gradle.read_text()
-          source = source.replace("flutter.compileSdkVersion", "34")
-          source = source.replace("flutter.targetSdkVersion", "34")
-          source, min_count = re.subn(r"(?m)^(\s*minSdk(?:Version)?\s*(?:=|\s)\s*)(?:flutter\.minSdkVersion|[0-9]+)", r"\g<1>21", source)
+          source = source.replace("flutter.compileSdkVersion", "35")
+          source = source.replace("flutter.targetSdkVersion", "35")
+          source, min_count = re.subn(
+              r"(?m)^(\s*minSdk(?:Version)?\s*(?:=|\s)\s*)(?:flutter\.minSdkVersion|[0-9]+)",
+              r"\g<1>24",
+              source,
+          )
           if min_count != 1:
               raise SystemExit(f"Expected one minSdkVersion declaration, found {min_count}")
           app_gradle.write_text(source)
-          print("Kotlin Gradle plugin set to 1.9.22; compileSdk set to 34; minSdk set to 21")
+          print("compileSdk set to 35; targetSdk set to 35; minSdk set to 24")
           PY
 
       - name: Get dependencies
