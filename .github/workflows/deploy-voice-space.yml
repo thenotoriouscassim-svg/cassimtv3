@@ -1,4 +1,4 @@
-name: Deploy JARVIS voice clone to Hugging Face
+name: Deploy JARVIS voice clone to Hugging Face ZeroGPU
 
 on:
   workflow_dispatch:
@@ -24,32 +24,26 @@ jobs:
         run: |
           if [ -z "$HF_TOKEN" ] || [ -z "$HF_SPACE_REPO_ID" ] || [ -z "$JARVIS_VOICE_API_KEY" ]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Add HF_TOKEN, HF_SPACE_REPO_ID and JARVIS_VOICE_API_KEY repository secrets to deploy the voice service."
-          else
-            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "::error::Missing HF_TOKEN, HF_SPACE_REPO_ID or JARVIS_VOICE_API_KEY repository secret."
+            exit 1
           fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
-        if: steps.secrets.outputs.ready == 'true'
       - uses: actions/setup-python@v5
-        if: steps.secrets.outputs.ready == 'true'
         with:
-          python-version: "3.11"
+          python-version: "3.10"
       - name: Install Hugging Face Hub
-        if: steps.secrets.outputs.ready == 'true'
         run: pip install --upgrade huggingface_hub
-      - name: Prepare Space files
-        if: steps.secrets.outputs.ready == 'true'
+      - name: Prepare ZeroGPU Space files
         run: |
           mkdir -p hf-space/samples
           cp voice_service/app.py hf-space/app.py
           cp voice_service/requirements.txt hf-space/requirements.txt
-          cp voice_service/Dockerfile hf-space/Dockerfile
           cp voice_service/README.md hf-space/README.md
           cp assets/audio/jarvis_boot.mp3 hf-space/samples/
           cp assets/audio/jarvis_request_root.mp3 hf-space/samples/
           cp assets/audio/jarvis_app_closed.mp3 hf-space/samples/
-      - name: Create Space, set API secret and deploy
-        if: steps.secrets.outputs.ready == 'true'
+      - name: Create Gradio ZeroGPU Space, set secret and deploy
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_REPO_ID: ${{ secrets.HF_SPACE_REPO_ID }}
@@ -60,16 +54,25 @@ jobs:
           from huggingface_hub import HfApi
           repo_id = os.environ["HF_SPACE_REPO_ID"]
           api = HfApi(token=os.environ["HF_TOKEN"])
-          api.create_repo(repo_id=repo_id, repo_type="space", space_sdk="docker", exist_ok=True)
-          api.add_space_secret(repo_id=repo_id, key="JARVIS_VOICE_API_KEY", value=os.environ["JARVIS_VOICE_API_KEY"])
+          api.create_repo(
+              repo_id=repo_id,
+              repo_type="space",
+              space_sdk="gradio",
+              space_hardware="zero-a10g",
+              exist_ok=True,
+          )
+          api.add_space_secret(
+              repo_id=repo_id,
+              key="JARVIS_VOICE_API_KEY",
+              value=os.environ["JARVIS_VOICE_API_KEY"],
+          )
           api.upload_folder(
               repo_id=repo_id,
               repo_type="space",
               folder_path="hf-space",
-              commit_message="Deploy JARVIS XTTS-v2 voice clone",
+              commit_message="Deploy JARVIS XTTS-v2 on ZeroGPU",
           )
-          print("JARVIS voice service URL: https://" + repo_id.replace("/", "-") + ".hf.space")
+          print("Space files uploaded:", repo_id)
           PY
-      - name: Explain skipped deployment
-        if: steps.secrets.outputs.ready != 'true'
-        run: echo "Voice service deployment skipped. Configure the three repository secrets and run this workflow again."
+      - name: Confirm deployment target
+        run: echo "ZeroGPU Space deployment submitted. Check the Space build logs before connecting Render."
