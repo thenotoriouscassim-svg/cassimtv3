@@ -113,7 +113,7 @@ class JarvisService extends ChangeNotifier {
       if (piper.PiperPhonemize.initialize(espeakData) < 0) {
         throw Exception('Could not initialize the offline British phonemizer.');
       }
-      await sherpa.initBindingsAsync();
+      sherpa.initBindings();
 
       final modelConfig = sherpa.OfflineTtsModelConfig(
         vits: sherpa.OfflineTtsVitsModelConfig(
