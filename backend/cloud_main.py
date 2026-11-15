@@ -4,9 +4,6 @@ Uses Gemini API for intelligence. No local Ollama, PyTorch, Whisper or audio
 hardware dependencies are loaded by this service.
 """
 import os
-import base64
-import asyncio
-import tempfile
 import time
 import json
 from html.parser import HTMLParser
@@ -15,7 +12,7 @@ from typing import Dict, List, Optional
 
 import httpx
 import psutil
-from fastapi import FastAPI, File, Header, HTTPException, Response, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -273,154 +270,6 @@ async def live_search(req: SearchRequest):
     return await _search_without_gemini(query)
 
 
-class SpeechRequest(BaseModel):
-    text: str = Field(min_length=1, max_length=5000)
-
-
-def _google_cloud_access_token():
-    if not GOOGLE_CLOUD_PROJECT or not GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON:
-        raise HTTPException(
-            status_code=503,
-            detail="Gemini Voice Design needs GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON in Render."
-        )
-    try:
-        from google.oauth2 import service_account
-        from google.auth.transport.requests import Request
-        info = json.loads(GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON)
-        credentials = service_account.Credentials.from_service_account_info(
-            info, scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-        credentials.refresh(Request())
-        return credentials.token
-    except HTTPException:
-        raise
-    except Exception as exc:
-        print("Google Cloud authentication error: {}: {}".format(type(exc).__name__, exc))
-        raise HTTPException(status_code=503, detail="Google Cloud service-account authentication failed.")
-
-
-@app.get("/voice/status")
-async def voice_status():
-    configured = bool(GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON and JARVIS_GEMINI_VOICE_ID)
-    return {
-        "configured": configured,
-        "ready": configured,
-        "engine": "Gemini 3.8 Flash TTS Voice Design",
-        "voice": "JARVIS synthetic British baritone",
-        "detail": "Gemini designed voice is configured." if configured else
-            "Set Google Cloud project and service-account credentials, then create a JARVIS voice with POST /voice/setup and save its returned voice_id as JARVIS_GEMINI_VOICE_ID."
-    }
-
-
-@app.post("/voice/setup")
-async def setup_jarvis_voice():
-    """Create a custom synthetic JARVIS voice using Gemini Voice Design."""
-    if not GOOGLE_CLOUD_PROJECT:
-        raise HTTPException(status_code=503, detail="Set GOOGLE_CLOUD_PROJECT in Render first.")
-    token = _google_cloud_access_token()
-    url = "https://aiplatform.googleapis.com/v1beta1/projects/{}/locations/global/voices".format(GOOGLE_CLOUD_PROJECT)
-    payload = {
-        "store": True,
-        "voice": {
-            "type": "VOICE_TYPE_PROMPTED",
-            "displayName": "JARVIS AI by CassimTV",
-            "gender": "male",
-            "languageCode": "en-GB",
-            "prompted": {"input": JARVIS_VOICE_PROMPT}
-        }
-    }
-    try:
-        async with httpx.AsyncClient(timeout=90) as client:
-            response = await client.post(url, headers={
-                "Authorization": "Bearer " + token,
-                "Content-Type": "application/json"
-            }, json=payload)
-        if response.status_code >= 400:
-            detail = response.text[:1200]
-            print("Gemini voice design error {}: {}".format(response.status_code, detail))
-            raise HTTPException(status_code=502, detail="Gemini Voice Design failed: " + detail)
-        data = response.json()
-        voice_id = data.get("id")
-        if not voice_id:
-            raise HTTPException(status_code=502, detail="Gemini did not return a voice ID.")
-        sample = data.get("sampleAudio", {})
-        return {
-            "created": True,
-            "voice_id": voice_id,
-            "display_name": "JARVIS AI by CassimTV",
-            "sample_audio_mime_type": sample.get("mimeType"),
-            "next_step": "Save voice_id as JARVIS_GEMINI_VOICE_ID in Render environment variables."
-        }
-    except HTTPException:
-        raise
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Gemini Voice Design timed out.")
-    except httpx.HTTPError:
-        raise HTTPException(status_code=502, detail="Could not reach Google Gemini Voice Design.")
-
-
-@app.post("/speak")
-async def speak(req: SpeechRequest):
-    """Generate JARVIS speech with a stored Gemini-designed synthetic voice."""
-    if not JARVIS_GEMINI_VOICE_ID:
-        raise HTTPException(status_code=503, detail="JARVIS Gemini voice has not been created. Configure Google Cloud and call /voice/setup.")
-    text = " ".join(req.text.split())
-    if not text:
-        raise HTTPException(status_code=400, detail="Speech text is empty.")
-    token = _google_cloud_access_token()
-    url = "https://aiplatform.googleapis.com/v1/projects/{}/locations/global/publishers/google/models/{}:generateContent".format(
-        GOOGLE_CLOUD_PROJECT, GEMINI_TTS_MODEL
-    )
-    payload = {
-        "contents": [{
-            "role": "user",
-            "parts": [{
-                "text": text[:4000],
-                "speechMetadata": {"style": "calm, measured, precise, naturally conversational; understated confidence"}
-            }]
-        }],
-        "generationConfig": {
-            "responseModalities": ["AUDIO"],
-            "speechConfig": {"voiceConfig": {"voice": JARVIS_GEMINI_VOICE_ID}}
-        }
-    }
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(url, headers={
-                "Authorization": "Bearer " + token,
-                "Content-Type": "application/json"
-            }, json=payload)
-        if response.status_code >= 400:
-            detail = response.text[:1200]
-            print("Gemini TTS error {}: {}".format(response.status_code, detail))
-            raise HTTPException(status_code=502, detail="Gemini speech generation failed: " + detail)
-        data = response.json()
-        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        audio = next((p.get("inlineData", {}) for p in parts if p.get("inlineData", {}).get("data")), None)
-        if not audio:
-            raise HTTPException(status_code=502, detail="Gemini returned no speech audio.")
-        raw = base64.b64decode(audio["data"])
-        mime = audio.get("mimeType", "audio/wav").split(";")[0]
-        if mime == "audio/l16":
-            import wave
-            import io
-            buffer = io.BytesIO()
-            with wave.open(buffer, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(24000)
-                wf.writeframes(raw)
-            raw = buffer.getvalue()
-            mime = "audio/wav"
-        return Response(content=raw, media_type=mime if mime.startswith("audio/") else "audio/wav")
-    except HTTPException:
-        raise
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Gemini speech generation timed out.")
-    except httpx.HTTPError:
-        raise HTTPException(status_code=502, detail="Could not reach Gemini speech generation.")
-
-
 @app.post("/chat")
 async def chat(req: ChatRequest):
     if not GEMINI_API_KEY:
@@ -546,19 +395,3 @@ async def command(req: CommandRequest):
         detail="Device-control commands are not connected to the cloud backend yet. No command was executed."
     )
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    try:
-        while True:
-            message = await websocket.receive_json()
-            if message.get("type") == "stop_listening":
-                await websocket.send_json({"type": "state_change", "state": "standby"})
-            elif message.get("type") == "activate_listening":
-                await websocket.send_json({"type": "state_change", "state": "standby"})
-                await websocket.send_json({
-                    "type": "response",
-                    "text": "Voice capture is not connected to the cloud backend yet, sir. Text chat is ready."
-                })
-    except WebSocketDisconnect:
-        pass
