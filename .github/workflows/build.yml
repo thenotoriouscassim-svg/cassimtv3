@@ -77,7 +77,7 @@ jobs:
           source = app_gradle.read_text()
           source = source.replace("flutter.compileSdkVersion", "34")
           source = source.replace("flutter.targetSdkVersion", "34")
-          source, min_count = re.subn(r"(?m)^(\\s*minSdkVersion\\s+)(?:flutter\\.minSdkVersion|[0-9]+)", r"\\g<1>21", source)
+          source, min_count = re.subn(r"(?m)^(\s*minSdkVersion\s+)(?:flutter\.minSdkVersion|[0-9]+)", r"\g<1>21", source)
           if min_count != 1:
               raise SystemExit(f"Expected one minSdkVersion declaration, found {min_count}")
           app_gradle.write_text(source)
