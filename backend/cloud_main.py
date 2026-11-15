@@ -218,7 +218,7 @@ async def _search_without_gemini(query: str):
         lines.append(source["url"])
         lines.append("")
     return {
-        "answer": "\\n".join(lines).strip(),
+        "answer": "\n".join(lines).strip(),
         "sources": sources,
         "search_queries": [query],
         "provider": "DuckDuckGo HTML (free fallback)",
