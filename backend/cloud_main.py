@@ -4,6 +4,7 @@ Uses Gemini API for intelligence. No local Ollama, PyTorch, Whisper or audio
 hardware dependencies are loaded by this service.
 """
 import os
+import asyncio
 import time
 from typing import Dict, List, Optional
 
@@ -81,45 +82,58 @@ async def voice_status():
     if not VOICE_API_URL or not VOICE_API_KEY:
         return {"configured": False, "ready": False, "engine": "Coqui XTTS-v2", "detail": "Set JARVIS_VOICE_API_URL and JARVIS_VOICE_API_KEY in Render."}
     try:
-        async with httpx.AsyncClient(timeout=12) as client:
-            response = await client.get(f"{VOICE_API_URL}/health")
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.get(VOICE_API_URL)
         response.raise_for_status()
-        data = response.json()
-        return {"configured": True, "ready": data.get("status") == "ok", "engine": data.get("engine", "Coqui XTTS-v2"), "model_loaded": data.get("model_loaded", False), "samples_ready": data.get("samples_ready", False)}
+        return {
+            "configured": True,
+            "ready": True,
+            "engine": "Coqui XTTS-v2 on Hugging Face ZeroGPU",
+            "detail": "The Gradio voice Space is reachable. GPU/model readiness is confirmed when speech generation runs.",
+        }
     except Exception:
-        return {"configured": True, "ready": False, "engine": "Coqui XTTS-v2", "detail": "The voice service is not reachable yet."}
+        return {
+            "configured": True,
+            "ready": False,
+            "engine": "Coqui XTTS-v2 on Hugging Face ZeroGPU",
+            "detail": "The voice Space is starting, sleeping, building, or unreachable.",
+        }
 
 
 @app.post("/speak")
 async def speak(req: SpeechRequest):
-    """Proxy speech to the dedicated XTTS-v2 clone. No preset-voice fallback."""
+    """Proxy speech to the dedicated XTTS-v2 ZeroGPU Space. No preset-voice fallback."""
     if not VOICE_API_URL or not VOICE_API_KEY:
-        raise HTTPException(status_code=503, detail="JARVIS voice cloning is not connected yet. Configure the XTTS voice service in Render.")
+        raise HTTPException(status_code=503, detail="JARVIS voice cloning is not connected yet. Configure the XTTS voice Space in Render.")
     text = " ".join(req.text.split())
     if not text:
         raise HTTPException(status_code=400, detail="Speech text is empty.")
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client:
-            upstream = await client.post(
-                f"{VOICE_API_URL}/speak",
-                json={"text": text},
-                headers={"Authorization": f"Bearer {VOICE_API_KEY}"},
-            )
-        if upstream.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"The XTTS voice service returned HTTP {upstream.status_code}.")
-        if not upstream.content:
-            raise HTTPException(status_code=502, detail="The XTTS voice service returned empty audio.")
-        media_type = upstream.headers.get("content-type", "audio/wav").split(";")[0]
-        if not media_type.startswith("audio/"):
-            raise HTTPException(status_code=502, detail="The XTTS voice service did not return audio.")
-        return Response(content=upstream.content, media_type=media_type)
+        from gradio_client import Client
+
+        def generate():
+            client = Client(VOICE_API_URL, verbose=False)
+            return client.predict(text[:2500], VOICE_API_KEY, api_name="/generate")
+
+        result = await asyncio.wait_for(asyncio.to_thread(generate), timeout=240)
+        audio_path = result.get("path") if isinstance(result, dict) else result
+        if not audio_path or not isinstance(audio_path, str) or not os.path.isfile(audio_path):
+            raise HTTPException(status_code=502, detail="The voice Space returned no usable audio file.")
+        with open(audio_path, "rb") as audio_file:
+            audio_bytes = audio_file.read()
+        if not audio_bytes:
+            raise HTTPException(status_code=502, detail="The voice Space returned empty audio.")
+        return Response(content=audio_bytes, media_type="audio/wav")
     except HTTPException:
         raise
-    except httpx.TimeoutException:
+    except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Voice generation timed out. Try a shorter response.")
-    except httpx.HTTPError:
-        raise HTTPException(status_code=502, detail="JARVIS could not reach the XTTS voice service.")
-
+    except Exception as exc:
+        message = str(exc).lower()
+        if "quota" in message or "zerogpu" in message or "gpu" in message:
+            raise HTTPException(status_code=503, detail="Hugging Face ZeroGPU is busy or its free daily quota is exhausted. Try again later.")
+        raise HTTPException(status_code=502, detail="JARVIS could not generate speech through the voice Space.")
+ 
 @app.post("/chat")
 async def chat(req: ChatRequest):
     if not GEMINI_API_KEY:
