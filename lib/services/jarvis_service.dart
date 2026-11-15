@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 import 'package:archive/archive.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:piper_phonemize/piper_phonemize.dart' as piper;
@@ -30,7 +29,6 @@ class JarvisService extends ChangeNotifier {
   double _audioLevel = 0.0;
   String _backendUrl = JarvisStrings.backendUrl;
   final AudioPlayer _voicePlayer = AudioPlayer();
-  final FlutterTts _systemTts = FlutterTts();
   sherpa.OfflineTts? _neuralTts;
   bool _localTtsReady = false;
   int _retryTicks = 0;
@@ -184,23 +182,12 @@ class JarvisService extends ChangeNotifier {
       );
       if (await wavFile.exists()) await wavFile.delete();
     } catch (error) {
-      // Keep JARVIS audible even if the optional offline Piper model fails to load.
-      try {
-        await _voicePlayer.stop();
-        await _systemTts.setLanguage('en-GB');
-        await _systemTts.setSpeechRate(0.46);
-        await _systemTts.setPitch(0.92);
-        await _systemTts.awaitSpeakCompletion(true);
-        final result = await _systemTts.speak(text);
-        if (result != 1) throw Exception('Android text-to-speech did not start.');
-      } catch (fallbackError) {
-        _addMessage(Message(
-          role: MessageRole.assistant,
-          content: 'Speech failed. Offline voice: ${error.toString().replaceFirst('Exception: ', '')}. Android voice: ${fallbackError.toString().replaceFirst('Exception: ', '')}',
-          timestamp: DateTime.now(),
-          isError: true,
-        ));
-      }
+      _addMessage(Message(
+        role: MessageRole.assistant,
+        content: 'Piper voice failed: ${error.toString().replaceFirst('Exception: ', '')}',
+        timestamp: DateTime.now(),
+        isError: true,
+      ));
     }
   }
 
@@ -297,7 +284,6 @@ class JarvisService extends ChangeNotifier {
     await prefs.setBool('auto_speak', enabled);
     if (!enabled) {
       try { await _voicePlayer.stop(); } catch (_) {}
-      try { await _systemTts.stop(); } catch (_) {}
     }
     notifyListeners();
   }
@@ -547,7 +533,6 @@ class JarvisService extends ChangeNotifier {
     _wsChannel?.sink.close();
     _voicePlayer.stop();
     _voicePlayer.dispose();
-    _systemTts.stop();
     _neuralTts?.free();
     super.dispose();
   }
