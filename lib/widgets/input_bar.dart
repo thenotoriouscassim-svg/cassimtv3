@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/jarvis_service.dart';
+import '../services/memory_service.dart';
 import '../utils/constants.dart';
 import '../screens/call_screen.dart';
 
@@ -40,7 +41,7 @@ class _InputBarState extends State<InputBar> {
   void _send(JarvisService jarvis) {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
-    jarvis.sendTextMessage(text);
+    jarvis.sendTextMessage(text, memoryContext: context.read<MemoryService>().buildMemoryContext());
     _controller.clear();
   }
 
