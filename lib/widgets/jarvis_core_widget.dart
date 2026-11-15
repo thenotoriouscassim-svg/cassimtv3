@@ -14,10 +14,8 @@ class _JarvisCoreWidgetState extends State<JarvisCoreWidget>
     with TickerProviderStateMixin {
   late AnimationController _pulseController;
   late AnimationController _rotateController;
-  late AnimationController _listenController;
   late Animation<double> _pulseAnim;
   late Animation<double> _rotateAnim;
-  late Animation<double> _listenAnim;
 
   @override
   void initState() {
@@ -33,23 +31,12 @@ class _JarvisCoreWidgetState extends State<JarvisCoreWidget>
       duration: const Duration(seconds: 8),
     )..repeat();
 
-    _listenController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 400),
-    );
-
-    _pulseAnim  = Tween<double>(begin: 0.95, end: 1.05).animate(
-        CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut));
-    _rotateAnim = Tween<double>(begin: 0, end: 2 * pi).animate(_rotateController);
-    _listenAnim = Tween<double>(begin: 1.0, end: 1.3).animate(
-        CurvedAnimation(parent: _listenController, curve: Curves.easeOut));
   }
 
   @override
   void dispose() {
     _pulseController.dispose();
     _rotateController.dispose();
-    _listenController.dispose();
     super.dispose();
   }
 
@@ -58,16 +45,8 @@ class _JarvisCoreWidgetState extends State<JarvisCoreWidget>
     final jarvis = context.watch<JarvisService>();
     final state  = jarvis.state;
 
-    // Drive listen animation based on state
-    if (state == JarvisState.listening || state == JarvisState.speaking) {
-      _listenController.repeat(reverse: true);
-    } else {
-      _listenController.stop();
-      _listenController.animateTo(0);
-    }
-
     return AnimatedBuilder(
-      animation: Listenable.merge([_pulseAnim, _rotateAnim, _listenAnim]),
+      animation: Listenable.merge([_pulseAnim, _rotateAnim]),
       builder: (context, _) {
         return Center(
           child: Stack(
@@ -104,9 +83,7 @@ class _JarvisCoreWidgetState extends State<JarvisCoreWidget>
 
               // Pulsing core circle
               Transform.scale(
-                scale: state == JarvisState.standby
-                    ? _pulseAnim.value
-                    : _listenAnim.value,
+                scale: state == JarvisState.standby ? _pulseAnim.value : 1.0,
                 child: Container(
                   width: 80,
                   height: 80,
@@ -248,8 +225,6 @@ class _JarvisCoreWidgetState extends State<JarvisCoreWidget>
 
   Color _stateColor(JarvisState state) => switch (state) {
     JarvisState.standby          => JarvisColors.cyanDim,
-    JarvisState.wakeWordDetected => JarvisColors.gold,
-    JarvisState.listening        => JarvisColors.green,
     JarvisState.processing       => JarvisColors.electricBlue,
     JarvisState.speaking         => JarvisColors.cyan,
   };
@@ -285,7 +260,7 @@ class _ArcRingPainter extends CustomPainter {
     for (int i = 0; i < segments; i++) {
       final startAngle = i * segAngle + dashOffset * pi;
       paint.color = color.withOpacity(
-        state == JarvisState.listening || state == JarvisState.speaking
+        state == JarvisState.speaking
             ? 1.0
             : 0.6,
       );
