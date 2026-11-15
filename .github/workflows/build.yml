@@ -65,14 +65,14 @@ jobs:
           settings = Path("android/settings.gradle")
           source = settings.read_text()
           source, agp_count = re.subn(
-              r"(id\s+['\"]com\.android\.application['"]\s+version\s+['\"])[^'\"]+(['\"])",
+              r"""(id\s+['"]com\.android\.application['"]\s+version\s+['"])[^'"]+(['"])""",
               r"\g<1>8.6.1\g<2>",
               source,
           )
           if agp_count != 1:
               raise SystemExit(f"Expected one Android Gradle Plugin declaration, found {agp_count}")
           source, kotlin_count = re.subn(
-              r"(id\s+['\"]org\.jetbrains\.kotlin\.android['"]\s+version\s+['\"])[^'\"]+(['\"])",
+              r"""(id\s+['"]org\.jetbrains\.kotlin\.android['"]\s+version\s+['"])[^'"]+(['"])""",
               r"\g<1>1.9.24\g<2>",
               source,
           )
