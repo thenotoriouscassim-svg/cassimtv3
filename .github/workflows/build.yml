@@ -34,13 +34,19 @@ jobs:
       - name: Restore missing Android project
         shell: bash
         run: |
-          if [ ! -f android/app/build.gradle ] || [ ! -f android/settings.gradle ] || [ ! -f android/gradlew ]; then
-            cp android/app/src/main/AndroidManifest.xml /tmp/jarvis-custom-manifest.xml
+          if [ ! -f android/app/build.gradle ] && [ ! -f android/app/build.gradle.kts ] || [ ! -f android/settings.gradle ] && [ ! -f android/settings.gradle.kts ] || [ ! -f android/gradlew ]; then
+            if [ -f android/app/src/main/AndroidManifest.xml ]; then
+              cp android/app/src/main/AndroidManifest.xml /tmp/jarvis-custom-manifest.xml
+            fi
             rm -rf android
-            flutter create --platforms=android --org com.cassimtv --project-name jarvis_ai /tmp/jarvis_android_scaffold
-            cp -R /tmp/jarvis_android_scaffold/android ./android
-            cp /tmp/jarvis-custom-manifest.xml android/app/src/main/AndroidManifest.xml
+            flutter create --platforms=android --org com.cassimtv --project-name jarvis_ai .
+            if [ -f /tmp/jarvis-custom-manifest.xml ]; then
+              cp /tmp/jarvis-custom-manifest.xml android/app/src/main/AndroidManifest.xml
+            fi
           fi
+          test -f android/settings.gradle || test -f android/settings.gradle.kts
+          test -f android/gradlew
+          ls -la android
 
       - name: Install Android SDK 35 and NDK
         shell: bash
