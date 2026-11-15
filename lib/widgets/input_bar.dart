@@ -112,6 +112,16 @@ class _InputBarState extends State<InputBar> {
               ),
             );
           });
+
+          // A completed utterance is sent straight to the cloud AI.
+          // JARVIS speaks the reply through the device TTS engine.
+          if (result.finalResult && result.recognizedWords.trim().isNotEmpty) {
+            final spokenRequest = result.recognizedWords.trim();
+            _speech.stop();
+            setState(() => _isListening = false);
+            context.read<JarvisService>().sendTextMessage(spokenRequest);
+            _controller.clear();
+          }
         },
         listenFor: const Duration(seconds: 30),
         pauseFor: const Duration(seconds: 4),
