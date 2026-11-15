@@ -12,7 +12,6 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _urlController = TextEditingController();
-  bool _autoSpeak = true;
 
   @override
   void initState() {
@@ -24,14 +23,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _urlController.text = prefs.getString('backend_url') ?? JarvisStrings.backendUrl;
-      _autoSpeak          = prefs.getBool('auto_speak') ?? true;
     });
   }
 
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('backend_url', _urlController.text.trim());
-    await context.read<JarvisService>().setAutoSpeak(_autoSpeak);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -70,19 +67,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 24),
 
-          _section('VOICE SETTINGS'),
-          _toggle('Speak AI responses aloud', _autoSpeak,
-              (v) => setState(() => _autoSpeak = v)),
-          const SizedBox(height: 24),
-
           _section('ABOUT'),
           _infoRow('App', 'JARVIS AI'),
           _infoRow('Developer', 'CassimTV'),
           _infoRow('Version', '1.0.0'),
           _infoRow('AI Engine', 'Google Gemini (Cloud)'),
-          _infoRow('Voice Engine', 'Kokoro / Sherpa-ONNX (offline neural)'),
-          _infoRow('Speech Input', 'Gemini audio transcription'),
-          _infoRow('Wake Word', 'Requires Porcupine setup'),
+          _infoRow('Voice Engine', 'Fish Audio (Cloud TTS)'),
           const SizedBox(height: 32),
 
           ElevatedButton(
