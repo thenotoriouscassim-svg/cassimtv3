@@ -69,9 +69,11 @@ jobs:
               r"\g<1>'1.9.22'",
               source,
           )
-          if count != 1:
-              raise SystemExit(f"Expected one ext.kotlin_version declaration, found {count}")
-          root_gradle.write_text(source)
+          if count == 1:
+              root_gradle.write_text(source)
+              print("Updated legacy Kotlin Gradle plugin to 1.9.22")
+          else:
+              print("Using the Kotlin Gradle plugin version from the modern Flutter template")
 
           app_gradle = Path("android/app/build.gradle")
           source = app_gradle.read_text()
