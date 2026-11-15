@@ -65,8 +65,8 @@ jobs:
           root_gradle = Path("android/build.gradle")
           source = root_gradle.read_text()
           source, count = re.subn(
-              r"(?m)^(\\s*ext\\.kotlin_version\\s*=\\s*)['\"][^'\"]+['\"]",
-              r"\\g<1>'1.9.22'",
+              r"(?m)^(\s*ext\.kotlin_version\s*=\s*)['\"][^'\"]+['\"]",
+              r"\g<1>'1.9.22'",
               source,
           )
           if count != 1:
