@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../utils/constants.dart';
@@ -18,6 +19,7 @@ class JarvisService extends ChangeNotifier {
   bool _isConnected = false;
   WebSocketChannel? _wsChannel;
   Timer? _statsTimer;
+  final AudioPlayer _ttsPlayer = AudioPlayer();
   String _backendUrl = JarvisStrings.backendUrl;
   int _retryTicks = 0;
 
@@ -167,6 +169,38 @@ class JarvisService extends ChangeNotifier {
     notifyListeners();
   }
 
+  String _makeSpeakable(String text) {
+    return text
+        .replaceAll(RegExp(r'```[\\s\\S]*?```'), ' Code omitted. ')
+        .replaceAll(RegExp(r'`[^`]*`'), ' ')
+        .replaceAll(RegExp(r'!\\[([^\\]]*)\\]\\([^)]*\\)'), r'$1')
+        .replaceAll(RegExp(r'\\[([^\\]]+)\\]\\([^)]*\\)'), r'$1')
+        .replaceAll(RegExp(r'[#*_>~]'), ' ')
+        .replaceAll(RegExp(r'\\s+'), ' ')
+        .trim();
+  }
+
+  Future<void> _speakResponse(String text) async {
+    final speakable = _makeSpeakable(text);
+    if (speakable.isEmpty) return;
+    final spokenText = speakable.length > 6000 ? speakable.substring(0, 6000) : speakable;
+    try {
+      final response = await http.post(
+        Uri.parse('$_backendUrl/tts'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'text': spokenText}),
+      ).timeout(const Duration(seconds: 100));
+      if (response.statusCode != 200) {
+        debugPrint('JARVIS Fish Audio TTS unavailable: HTTP ${response.statusCode} ${response.body}');
+        return;
+      }
+      await _ttsPlayer.stop();
+      await _ttsPlayer.play(BytesSource(response.bodyBytes));
+    } catch (error) {
+      debugPrint('JARVIS Fish Audio playback failed: $error');
+    }
+  }
+
   Future<void> sendTextMessage(String text) async {
     if (text.trim().isEmpty) return;
 
@@ -222,6 +256,7 @@ class JarvisService extends ChangeNotifier {
           timestamp: DateTime.now(),
         ));
         _setState(JarvisState.standby);
+        await _speakResponse(answer);
       } else {
         String detail = 'Cloud service returned HTTP ${response.statusCode}.';
         try {
@@ -325,6 +360,7 @@ class JarvisService extends ChangeNotifier {
   void dispose() {
     _statsTimer?.cancel();
     _wsChannel?.sink.close();
+    _ttsPlayer.dispose();
     super.dispose();
   }
 }
