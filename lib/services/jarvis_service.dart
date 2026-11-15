@@ -20,6 +20,10 @@ class JarvisService extends ChangeNotifier {
   final AudioPlayer _ttsPlayer = AudioPlayer();
   String _backendUrl = JarvisStrings.backendUrl;
   int _retryTicks = 0;
+  final List<Map<String, dynamic>> _chatSessions = [];
+  String _activeChatId = '';
+  List<Map<String, dynamic>> get savedChats => _chatSessions.map((c) => Map<String, dynamic>.from(c)).toList();
+  String get activeChatId => _activeChatId;
 
   JarvisState get state => _state;
   List<Message> get conversation => List.unmodifiable(_conversation);
@@ -41,8 +45,74 @@ class JarvisService extends ChangeNotifier {
     } catch (_) {
       // Use the cloud URL default if preferences are unavailable.
     }
+    await _loadChats();
     await _connectToBackend();
     _startStatsPolling();
+  }
+
+  Future<void> _loadChats() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('jarvis_chat_sessions');
+    if (raw != null) {
+      try {
+        final decoded = jsonDecode(raw) as List<dynamic>;
+        _chatSessions.addAll(decoded.whereType<Map>().map((e) => Map<String, dynamic>.from(e)));
+      } catch (_) { _chatSessions.clear(); }
+    }
+    if (_chatSessions.isEmpty) {
+      _activeChatId = DateTime.now().microsecondsSinceEpoch.toString();
+      _chatSessions.add({'id': _activeChatId, 'title': 'New chat', 'messages': <dynamic>[]});
+      await _persistChats();
+    } else {
+      _activeChatId = _chatSessions.first['id'].toString();
+      final active = _chatSessions.firstWhere((c) => c['id'] == _activeChatId);
+      _conversation.addAll((active['messages'] as List<dynamic>? ?? []).whereType<Map>().map((m) => Message.fromJson(Map<String, dynamic>.from(m))));
+    }
+    notifyListeners();
+  }
+
+  Future<void> _persistChats() async {
+    final index = _chatSessions.indexWhere((c) => c['id'] == _activeChatId);
+    if (index >= 0) {
+      _chatSessions[index]['messages'] = _conversation.map((m) => m.toJson()).toList();
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('jarvis_chat_sessions', jsonEncode(_chatSessions));
+  }
+
+  Future<void> createNewChat() async {
+    await _persistChats();
+    _conversation.clear();
+    _activeChatId = DateTime.now().microsecondsSinceEpoch.toString();
+    _chatSessions.insert(0, {'id': _activeChatId, 'title': 'New chat', 'messages': <dynamic>[]});
+    await _persistChats();
+    notifyListeners();
+  }
+
+  Future<void> openChat(String id) async {
+    await _persistChats();
+    final chat = _chatSessions.firstWhere((c) => c['id'] == id, orElse: () => _chatSessions.first);
+    _activeChatId = chat['id'].toString();
+    _conversation
+      ..clear()
+      ..addAll((chat['messages'] as List<dynamic>? ?? []).whereType<Map>().map((m) => Message.fromJson(Map<String, dynamic>.from(m))));
+    notifyListeners();
+  }
+
+  Future<void> deleteChat(String id) async {
+    _chatSessions.removeWhere((c) => c['id'] == id);
+    if (_chatSessions.isEmpty) {
+      _conversation.clear();
+      _activeChatId = DateTime.now().microsecondsSinceEpoch.toString();
+      _chatSessions.add({'id': _activeChatId, 'title': 'New chat', 'messages': <dynamic>[]});
+    } else if (_activeChatId == id) {
+      _activeChatId = _chatSessions.first['id'].toString();
+      _conversation
+        ..clear()
+        ..addAll((_chatSessions.first['messages'] as List<dynamic>? ?? []).whereType<Map>().map((m) => Message.fromJson(Map<String, dynamic>.from(m))));
+    }
+    await _persistChats();
+    notifyListeners();
   }
 
   String _normalizeUrl(String value) =>
@@ -262,13 +332,16 @@ class JarvisService extends ChangeNotifier {
   void _addMessage(Message message) {
     _conversation.add(message);
     if (_conversation.length > 100) _conversation.removeAt(0);
+    final index = _chatSessions.indexWhere((c) => c['id'] == _activeChatId);
+    if (index >= 0 && _chatSessions[index]['title'] == 'New chat' && message.role == MessageRole.user) {
+      final title = message.content.trim();
+      _chatSessions[index]['title'] = title.length > 32 ? '${title.substring(0, 32)}…' : title;
+    }
+    _persistChats();
     notifyListeners();
   }
 
-  void clearConversation() {
-    _conversation.clear();
-    notifyListeners();
-  }
+  void clearConversation() { createNewChat(); }
 
   void _startStatsPolling() {
     _statsTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
