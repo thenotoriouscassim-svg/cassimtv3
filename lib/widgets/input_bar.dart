@@ -261,6 +261,24 @@ class _InputBarState extends State<InputBar> {
           ),
           const SizedBox(width: 10),
 
+          // Dedicated live web-search tool. This does not alter normal chat.
+          IconButton(
+            tooltip: 'Search the live web',
+            onPressed: _hasText
+                ? () {
+                    final query = _controller.text.trim();
+                    if (query.isEmpty) return;
+                    jarvis.searchWeb(query);
+                    _controller.clear();
+                  }
+                : null,
+            icon: Icon(
+              Icons.travel_explore,
+              color: _hasText ? JarvisColors.cyan : JarvisColors.textDim,
+              size: 21,
+            ),
+          ),
+
           // Send button.
           GestureDetector(
             onTap: _hasText ? () => _send(jarvis) : null,
