@@ -76,10 +76,10 @@ class StatusBarWidget extends StatelessWidget {
 
           // Mute toggle
           GestureDetector(
-            onTap: audio.toggleMute,
+            onTap: () => jarvis.setAutoSpeak(!jarvis.autoSpeak),
             child: Icon(
-              audio.isMuted ? Icons.volume_off : Icons.volume_up,
-              color: audio.isMuted ? JarvisColors.textDim : JarvisColors.textSecondary,
+              jarvis.autoSpeak ? Icons.volume_up : Icons.volume_off,
+              color: jarvis.autoSpeak ? JarvisColors.textSecondary : JarvisColors.red,
               size: 16,
             ),
           ),
