@@ -13,5 +13,7 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.8-flash
-      - key: JARVIS_TTS_VOICE
-        value: en-GB-RyanNeural
+      - key: JARVIS_VOICE_API_URL
+        sync: false
+      - key: JARVIS_VOICE_API_KEY
+        sync: false
