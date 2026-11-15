@@ -66,62 +66,52 @@ jobs:
           from pathlib import Path
           import re
 
-          settings = Path("android/settings.gradle")
+          settings = next((p for p in [Path("android/settings.gradle"), Path("android/settings.gradle.kts")] if p.exists()), None)
+          app_gradle = next((p for p in [Path("android/app/build.gradle"), Path("android/app/build.gradle.kts")] if p.exists()), None)
+          if settings is None or app_gradle is None:
+              raise SystemExit("Android Gradle files were not generated")
+
           source = settings.read_text()
           source, agp_count = re.subn(
-              r"""(id\s+['"]com\.android\.application['"]\s+version\s+['"])[^'"]+(['"])""",
-              r"\g<1>8.6.1\g<2>",
-              source,
-          )
+              r'''(id\\s*\\(?\\s*['"]com\\.android\\.application['"]\\s*\\)?\\s+version\\s+['"])[^'"]+(['"])''',
+              r"\\g<1>8.6.1\\g<2>", source)
           if agp_count != 1:
               raise SystemExit(f"Expected one Android Gradle Plugin declaration, found {agp_count}")
           source, kotlin_count = re.subn(
-              r"""(id\s+['"]org\.jetbrains\.kotlin\.android['"]\s+version\s+['"])[^'"]+(['"])""",
-              r"\g<1>1.9.24\g<2>",
-              source,
-          )
+              r'''(id\\s*\\(?\\s*['"]org\\.jetbrains\\.kotlin\\.android['"]\\s*\\)?\\s+version\\s+['"])[^'"]+(['"])''',
+              r"\\g<1>1.9.24\\g<2>", source)
           if kotlin_count != 1:
               raise SystemExit(f"Expected one Kotlin Gradle plugin declaration, found {kotlin_count}")
           settings.write_text(source)
 
           wrapper = Path("android/gradle/wrapper/gradle-wrapper.properties")
           source = wrapper.read_text()
-          source, wrapper_count = re.subn(
-              r"gradle-[0-9.]+-(?:all|bin)\.zip",
-              "gradle-8.7-all.zip",
-              source,
-          )
-          if wrapper_count != 1:
-              raise SystemExit(f"Expected one Gradle distribution URL, found {wrapper_count}")
+          source, count = re.subn(r"gradle-[0-9.]+-(?:all|bin)\\.zip", "gradle-8.7-all.zip", source)
+          if count != 1:
+              raise SystemExit(f"Expected one Gradle distribution URL, found {count}")
           wrapper.write_text(source)
 
-          app_gradle = Path("android/app/build.gradle")
           source = app_gradle.read_text()
-          source = source.replace("flutter.compileSdkVersion", "35")
-          source = source.replace("flutter.targetSdkVersion", "35")
+          source = source.replace("flutter.compileSdkVersion", "35").replace("flutter.targetSdkVersion", "35")
           source, min_count = re.subn(
-              r"(?m)^(\s*minSdk(?:Version)?\s*(?:=|\s)\s*)(?:flutter\.minSdkVersion|[0-9]+)",
-              r"\g<1>24",
-              source,
-          )
+              r"(?m)^(\\s*minSdk(?:Version)?\\s*(?:=|\\s)\\s*)(?:flutter\\.minSdkVersion|[0-9]+)",
+              r"\\g<1>24", source)
           if min_count != 1:
-              raise SystemExit(f"Expected one minSdkVersion declaration, found {min_count}")
-
-          # Align Java and Kotlin bytecode targets and pin the NDK required by plugins.
+              raise SystemExit(f"Expected one minSdk declaration, found {min_count}")
           source = source.replace("JavaVersion.VERSION_1_8", "JavaVersion.VERSION_17")
+          source = source.replace("JavaVersion.VERSION_11", "JavaVersion.VERSION_17")
           source = source.replace("jvmTarget = '1.8'", "jvmTarget = '17'")
           source = source.replace('jvmTarget = "1.8"', 'jvmTarget = "17"')
+          source = source.replace("jvmTarget = JavaVersion.VERSION_11.toString()", "jvmTarget = JavaVersion.VERSION_17.toString()")
           if "ndkVersion" not in source:
-              source, android_count = re.subn(
-                  r"(?m)^(android\s*\{)",
-                  r'\1\n    ndkVersion "26.1.10909125"',
-                  source,
-                  count=1,
-              )
-              if android_count != 1:
-                  raise SystemExit("Could not find the android { } block to set ndkVersion")
+              if app_gradle.suffix == ".kts":
+                  source, count = re.subn(r"(?m)^(android\\s*\\{)", r'\\1\\n    ndkVersion = "26.1.10909125"', source, count=1)
+              else:
+                  source, count = re.subn(r"(?m)^(android\\s*\\{)", r'\\1\\n    ndkVersion "26.1.10909125"', source, count=1)
+              if count != 1:
+                  raise SystemExit("Could not set the Android NDK version")
           app_gradle.write_text(source)
-          print("Configured AGP 8.6.1, Kotlin 1.9.24, Gradle 8.7, SDK 35, minSdk 24, Java/Kotlin 17, NDK 26.1.10909125")
+          print(f"Configured {settings.name}, {app_gradle.name}, AGP 8.6.1, Gradle 8.7, SDK 35, minSdk 24, Java/Kotlin 17, NDK 26.1.10909125")
           PY
 
       - name: Get dependencies
