@@ -19,8 +19,13 @@ from pydantic import BaseModel, Field
 APP_STARTED = time.time()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
-VOICE_API_URL = os.getenv("JARVIS_VOICE_API_URL", "").strip().rstrip("/")
-VOICE_API_KEY = os.getenv("JARVIS_VOICE_API_KEY", "").strip()
+GEMINI_STT_MODEL = os.getenv("GEMINI_STT_MODEL", GEMINI_MODEL).strip()
+GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts").strip()
+GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Charon").strip()
+GEMINI_TTS_STYLE = os.getenv(
+    "GEMINI_TTS_STYLE",
+    "A natural, warm, deep male voice. Calm, articulate, confident and composed, with a subtle futuristic assistant character. Speak clearly at a measured conversational pace; never robotic or exaggerated."
+).strip()
 
 JARVIS_SYSTEM_PROMPT = """You are JARVIS, a personal AI assistant created for and by CassimTV.
 
@@ -70,8 +75,8 @@ async def health():
         "brand": "CassimTV",
         "ai_configured": bool(GEMINI_API_KEY),
         "model": GEMINI_MODEL if GEMINI_API_KEY else None,
-        "voice_configured": bool(VOICE_API_URL),
-        "voice_engine": "XTTS-v2 voice cloning via Hugging Face" if VOICE_API_URL else "Voice cloning service not connected",
+        "voice_configured": bool(GEMINI_API_KEY),
+        "voice_engine": "Gemini TTS (" + GEMINI_TTS_VOICE + ")" if GEMINI_API_KEY else "Gemini TTS not configured",
     }
 
 
@@ -85,7 +90,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="The recording is empty.")
     if len(audio_bytes) > 15 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Recording is too large. Keep it under 15 MB.")
-    mime_type = file.content_type if file.content_type and file.content_type.startswith("audio/") else "audio/wav"
+    mime_type = "audio/wav"
     payload = {
         "contents": [{
             "parts": [
@@ -95,12 +100,17 @@ async def transcribe_audio(file: UploadFile = File(...)):
         }],
         "generationConfig": {"temperature": 0, "maxOutputTokens": 700},
     }
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    url = "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent".format(GEMINI_STT_MODEL)
     try:
         async with httpx.AsyncClient(timeout=90) as client:
             response = await client.post(url, params={"key": GEMINI_API_KEY}, json=payload)
         if response.status_code >= 400:
-            raise HTTPException(status_code=502, detail="The speech recognition provider rejected the recording.")
+            try:
+                provider_error = response.json().get("error", {}).get("message", "Provider rejected the recording.")
+            except Exception:
+                provider_error = "Provider rejected the recording."
+            print("Gemini transcription error {}: {}".format(response.status_code, provider_error))
+            raise HTTPException(status_code=502, detail="Gemini transcription failed: " + provider_error)
         data = response.json()
         candidates = data.get("candidates", [])
         parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
@@ -199,42 +209,56 @@ async def voice_status():
 
 @app.post("/speak")
 async def speak(req: SpeechRequest):
-    """Proxy speech to the private XTTS-v2 Gradio Space."""
-    if not VOICE_API_URL:
-        raise HTTPException(status_code=503, detail="JARVIS voice service URL is not configured.")
-    if not VOICE_API_KEY:
-        raise HTTPException(status_code=503, detail="JARVIS voice service key is not configured.")
+    """Generate JARVIS speech directly with Gemini 3.8 Flash TTS."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="Gemini speech is not configured.")
     text = " ".join(req.text.split())
     if not text:
         raise HTTPException(status_code=400, detail="Speech text is empty.")
+    payload = {
+        "contents": [{
+            "role": "user",
+            "parts": [{
+                "text": text[:4000],
+                "speechMetadata": {"style": GEMINI_TTS_STYLE},
+            }],
+        }],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+                "voiceConfig": {"voice": GEMINI_TTS_VOICE},
+            },
+        },
+    }
+    url = "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent".format(GEMINI_TTS_MODEL)
     try:
-        from gradio_client import Client
-
-        def generate():
-            client = Client(VOICE_API_URL, verbose=False)
-            return client.predict(text[:2500], VOICE_API_KEY, api_name="/generate")
-
-        result = await asyncio.wait_for(asyncio.to_thread(generate), timeout=240)
-        audio_path = result.get("path") if isinstance(result, dict) else result
-        if isinstance(audio_path, (list, tuple)):
-            audio_path = audio_path[0] if audio_path else None
-        if not audio_path or not isinstance(audio_path, str) or not os.path.isfile(audio_path):
-            raise HTTPException(status_code=502, detail="The voice Space returned no usable audio file.")
-        with open(audio_path, "rb") as audio_file:
-            audio_bytes = audio_file.read()
-        if not audio_bytes:
-            raise HTTPException(status_code=502, detail="The voice Space returned empty audio.")
-        return Response(content=audio_bytes, media_type="audio/wav")
+        async with httpx.AsyncClient(timeout=90) as client:
+            response = await client.post(url, params={"key": GEMINI_API_KEY}, json=payload)
+        if response.status_code >= 400:
+            try:
+                provider_error = response.json().get("error", {}).get("message", "Gemini TTS rejected the request.")
+            except Exception:
+                provider_error = "Gemini TTS rejected the request."
+            print("Gemini TTS error {}: {}".format(response.status_code, provider_error))
+            raise HTTPException(status_code=502, detail="Gemini TTS failed: " + provider_error)
+        data = response.json()
+        candidates = data.get("candidates", [])
+        parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
+        for part in parts:
+            inline = part.get("inlineData") or part.get("inline_data") or {}
+            encoded = inline.get("data")
+            if encoded:
+                audio_bytes = base64.b64decode(encoded)
+                if audio_bytes:
+                    return Response(content=audio_bytes, media_type="audio/wav")
+        raise HTTPException(status_code=502, detail="Gemini TTS returned no audio data.")
     except HTTPException:
         raise
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="Voice generation timed out. Try a shorter response.")
-    except Exception as exc:
-        print(f"JARVIS voice generation error: {type(exc).__name__}: {exc}")
-        message = str(exc).lower()
-        if "quota" in message or "zerogpu" in message or "gpu" in message:
-            raise HTTPException(status_code=503, detail="The private voice Space is busy or its free GPU quota is exhausted. Try again later.")
-        raise HTTPException(status_code=502, detail="JARVIS could not generate speech through its XTTS voice Space.")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Gemini speech generation timed out.")
+    except httpx.HTTPError as exc:
+        print("Gemini TTS connection error: {}: {}".format(type(exc).__name__, exc))
+        raise HTTPException(status_code=502, detail="Could not reach Gemini speech generation.")
 
 
 @app.post("/chat")
