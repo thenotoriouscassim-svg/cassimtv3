@@ -59,7 +59,7 @@ class JarvisService extends ChangeNotifier {
       if (response.statusCode == 200) {
         final health = jsonDecode(response.body) as Map<String, dynamic>;
         _isConnected =
-            health['online'] == true && health['ai_configured'] == true;
+            health['status'] == 'online' && health['ai_configured'] == true;
         if (_isConnected) _connectWebSocket();
       } else {
         _isConnected = false;
