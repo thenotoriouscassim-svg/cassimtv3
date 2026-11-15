@@ -116,6 +116,60 @@ async def transcribe_audio(file: UploadFile = File(...)):
         raise HTTPException(status_code=502, detail="Could not reach the speech recognition service.")
 
 
+class SearchRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=1000)
+
+
+@app.post("/search")
+async def live_search(req: SearchRequest):
+    """Search the live web with Gemini Google Search grounding."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="Live search is not configured because the Gemini API key is missing.")
+    query = req.query.strip()
+    payload = {
+        "contents": [{
+            "role": "user",
+            "parts": [{"text": f"Search the live web for this query: {query}. Give a concise, useful answer based on current sources. Clearly distinguish verified facts from uncertainty."}]
+        }],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200},
+    }
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    try:
+        async with httpx.AsyncClient(timeout=75) as client:
+            response = await client.post(url, params={"key": GEMINI_API_KEY}, json=payload)
+        if response.status_code >= 400:
+            try:
+                detail = response.json().get("error", {}).get("message", "The search provider rejected the request.")
+            except Exception:
+                detail = "The search provider rejected the request."
+            raise HTTPException(status_code=502, detail=f"Live search failed: {detail}")
+        data = response.json()
+        candidates = data.get("candidates", [])
+        candidate = candidates[0] if candidates else {}
+        parts = candidate.get("content", {}).get("parts", [])
+        answer = "".join(part.get("text", "") for part in parts).strip()
+        if not answer:
+            raise HTTPException(status_code=502, detail="Live search returned no answer.")
+        metadata = candidate.get("groundingMetadata", {})
+        sources = []
+        seen_urls = set()
+        for chunk in metadata.get("groundingChunks", []):
+            web_source = chunk.get("web", {})
+            uri = web_source.get("uri")
+            title = web_source.get("title") or uri
+            if uri and uri.startswith(("https://", "http://")) and uri not in seen_urls:
+                seen_urls.add(uri)
+                sources.append({"title": title, "url": uri})
+        return {"answer": answer, "sources": sources, "search_queries": metadata.get("webSearchQueries", [query])}
+    except HTTPException:
+        raise
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Live web search timed out. Please try again.")
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="Could not reach the live search provider.")
+
+
 class SpeechRequest(BaseModel):
     text: str = Field(min_length=1, max_length=5000)
 
