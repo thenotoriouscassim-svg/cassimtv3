@@ -8,7 +8,7 @@ import '../utils/constants.dart';
 import '../models/message.dart';
 import '../models/system_stats.dart';
 
-enum JarvisState { standby, processing }
+enum JarvisState { standby, processing, speaking }
 
 class JarvisService extends ChangeNotifier {
   JarvisState _state = JarvisState.standby;
@@ -130,9 +130,11 @@ class JarvisService extends ChangeNotifier {
 
   void _setState(JarvisState newState) {
     _state = newState;
-    _statusText = newState == JarvisState.processing
-        ? JarvisStrings.processing
-        : JarvisStrings.standby;
+    _statusText = switch (newState) {
+      JarvisState.processing => JarvisStrings.processing,
+      JarvisState.speaking => JarvisStrings.speaking,
+      JarvisState.standby => JarvisStrings.standby,
+    };
     notifyListeners();
   }
 
@@ -162,7 +164,14 @@ class JarvisService extends ChangeNotifier {
         return;
       }
       await _ttsPlayer.stop();
-      await _ttsPlayer.play(BytesSource(response.bodyBytes));
+      _setState(JarvisState.speaking);
+      try {
+        final completed = _ttsPlayer.onPlayerComplete.first;
+        await _ttsPlayer.play(BytesSource(response.bodyBytes));
+        await completed.timeout(const Duration(minutes: 2));
+      } finally {
+        _setState(JarvisState.standby);
+      }
     } catch (error) {
       debugPrint('JARVIS Fish Audio playback failed: $error');
     }
