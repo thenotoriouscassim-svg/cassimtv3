@@ -29,7 +29,7 @@ class JarvisStrings {
   static const String listening    = 'LISTENING';
   static const String processing   = 'PROCESSING';
   static const String speaking     = 'SPEAKING';
-  static const String backendUrl   = 'http://localhost:8000'; // Change to your server
+  static const String backendUrl   = 'https://cassimtv3.onrender.com';
 }
 
 class JarvisDurations {
