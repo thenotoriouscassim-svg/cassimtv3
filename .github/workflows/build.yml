@@ -58,44 +58,14 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
-
-          # Flutter templates have used more than one location/syntax for
-          # the Kotlin Gradle plugin. Update it wherever it is declared.
-          candidates = [
-              Path("android/settings.gradle"),
-              Path("android/build.gradle"),
-              Path("android/app/build.gradle"),
-          ]
-          patterns = [
-              (r'(id\\s+["\']org\\.jetbrains\\.kotlin\\.android["\']\\s+version\\s+["\'])[^"\']+(["\'])', r'\\g<1>1.9.22\\g<2>'),
-              (r'(kotlin_version\\s*=\\s*["\'])[^"\']+(["\'])', r'\\g<1>1.9.22\\g<2>'),
-          ]
-          for path in candidates:
-              if not path.exists():
-                  continue
-              source = path.read_text()
-              original = source
-              for pattern, replacement in patterns:
-                  source = re.sub(pattern, replacement, source)
-              if source != original:
-                  path.write_text(source)
-                  print(f"Updated Kotlin plugin version in {path}")
 
           app_gradle = Path("android/app/build.gradle")
           source = app_gradle.read_text()
-          source, count = re.subn(
-              r'compileSdk(?:Version)?\\s+flutter\\.compileSdkVersion',
-              'compileSdk 34',
-              source,
-          )
-          if count:
-              app_gradle.write_text(source)
-              print("Configured compileSdk 34")
-          elif re.search(r'compileSdk(?:Version)?\\s+34', source):
-              print("compileSdk 34 already configured")
-          else:
-              raise SystemExit("Could not locate compileSdk declaration in android/app/build.gradle")
+          source = source.replace("flutter.compileSdkVersion", "34")
+          source = source.replace("flutter.targetSdkVersion", "34")
+          app_gradle.write_text(source)
+          print("Android app Gradle configuration:")
+          print(source)
           PY
 
       - name: Get dependencies
