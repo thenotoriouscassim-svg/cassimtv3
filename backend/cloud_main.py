@@ -4,6 +4,7 @@ Uses Gemini API for intelligence. No local Ollama, PyTorch, Whisper or audio
 hardware dependencies are loaded by this service.
 """
 import os
+import base64
 import asyncio
 import tempfile
 import time
@@ -11,7 +12,7 @@ from typing import Dict, List, Optional
 
 import httpx
 import psutil
-from fastapi import FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Header, HTTPException, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -72,6 +73,47 @@ async def health():
         "voice_configured": bool(VOICE_API_URL),
         "voice_engine": "XTTS-v2 voice cloning via Hugging Face" if VOICE_API_URL else "Voice cloning service not connected",
     }
+
+
+@app.post("/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    """Transcribe a short WAV recording using Gemini audio understanding."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="Speech recognition is not configured.")
+    audio_bytes = await file.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="The recording is empty.")
+    if len(audio_bytes) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Recording is too large. Keep it under 15 MB.")
+    mime_type = file.content_type if file.content_type and file.content_type.startswith("audio/") else "audio/wav"
+    payload = {
+        "contents": [{
+            "parts": [
+                {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(audio_bytes).decode("ascii")}},
+                {"text": "Transcribe the spoken words in this audio exactly. Return only the transcription. If no speech is audible, return an empty response."}
+            ]
+        }],
+        "generationConfig": {"temperature": 0, "maxOutputTokens": 700},
+    }
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    try:
+        async with httpx.AsyncClient(timeout=90) as client:
+            response = await client.post(url, params={"key": GEMINI_API_KEY}, json=payload)
+        if response.status_code >= 400:
+            raise HTTPException(status_code=502, detail="The speech recognition provider rejected the recording.")
+        data = response.json()
+        candidates = data.get("candidates", [])
+        parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
+        transcript = " ".join(part.get("text", "") for part in parts).strip()
+        if not transcript:
+            raise HTTPException(status_code=422, detail="No speech was detected. Try speaking closer to the microphone.")
+        return {"transcript": transcript}
+    except HTTPException:
+        raise
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Speech recognition timed out. Try a shorter recording.")
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="Could not reach the speech recognition service.")
 
 
 class SpeechRequest(BaseModel):
