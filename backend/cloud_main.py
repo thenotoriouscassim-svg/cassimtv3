@@ -84,8 +84,8 @@ async def health():
         "brand": "CassimTV",
         "ai_configured": bool(GEMINI_API_KEY),
         "model": GEMINI_MODEL if GEMINI_API_KEY else None,
-        "voice_configured": bool(JARVIS_VOICE_API_URL),
-        "voice_engine": "CassimTV JARVIS voice clone (XTTS)" if JARVIS_VOICE_API_URL else "Voice clone service not configured",
+        "voice_configured": bool(GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON and JARVIS_GEMINI_VOICE_ID),
+        "voice_engine": "Gemini-designed JARVIS synthetic voice" if JARVIS_GEMINI_VOICE_ID else "Gemini voice design not configured",
     }
 
 
@@ -241,7 +241,6 @@ async def setup_jarvis_voice():
             "type": "VOICE_TYPE_PROMPTED",
             "displayName": "JARVIS AI by CassimTV",
             "gender": "male",
-            "pitch": "low",
             "languageCode": "en-GB",
             "prompted": {"input": JARVIS_VOICE_PROMPT}
         }
