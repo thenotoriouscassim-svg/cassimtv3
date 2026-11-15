@@ -27,12 +27,12 @@ GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON
 JARVIS_GEMINI_VOICE_ID = os.getenv("JARVIS_GEMINI_VOICE_ID", "").strip()
 GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts").strip()
 JARVIS_VOICE_PROMPT = (
-    "A refined, highly realistic synthetic male AI assistant voice, mature-sounding "
-    "mid-to-low baritone, precise standard British English pronunciation, smooth "
-    "resonant tone with subtle warmth, crisp consonants, measured pacing, controlled "
-    "breath, calm confidence and understated dry wit. Polished, intelligent and "
-    "cinematic, like an advanced personal digital butler. Never robotic, nasal, "
-    "cartoonish, exaggerated, or overly theatrical."
+    "A distinctly masculine, very deep low-register British baritone, mature adult "
+    "male voice with chest resonance, rich dark timbre, firm controlled delivery, "
+    "crisp standard British English diction, measured pacing and understated dry wit. "
+    "Sound like a sophisticated cinematic artificial-intelligence butler: composed, "
+    "authoritative, intelligent and naturally human. Absolutely not feminine, high-pitched, "
+    "breathy, youthful, bright, cheerful, or sing-song. Avoid robotic monotony."
 )
 
 
@@ -241,6 +241,7 @@ async def setup_jarvis_voice():
             "type": "VOICE_TYPE_PROMPTED",
             "displayName": "JARVIS AI by CassimTV",
             "gender": "male",
+            "pitch": "low",
             "languageCode": "en-GB",
             "prompted": {"input": JARVIS_VOICE_PROMPT}
         }
