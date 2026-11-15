@@ -41,6 +41,7 @@ class _InputBarState extends State<InputBar> {
   void _send(JarvisService jarvis) {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
+    FocusScope.of(context).unfocus();
     jarvis.sendTextMessage(text, memoryContext: context.read<MemoryService>().buildMemoryContext());
     _controller.clear();
   }
@@ -102,6 +103,7 @@ class _InputBarState extends State<InputBar> {
                 ? () {
                     final query = _controller.text.trim();
                     if (query.isEmpty) return;
+                    FocusScope.of(context).unfocus();
                     jarvis.searchWeb(query);
                     _controller.clear();
                   }
