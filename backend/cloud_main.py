@@ -19,6 +19,7 @@ APP_STARTED = time.time()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
 VOICE_API_URL = os.getenv("JARVIS_VOICE_API_URL", "").strip().rstrip("/")
+VOICE_API_KEY = os.getenv("JARVIS_VOICE_API_KEY", "").strip()
 
 JARVIS_SYSTEM_PROMPT = """You are JARVIS, a personal AI assistant created for and by CassimTV.
 
@@ -102,29 +103,20 @@ async def voice_status():
 
 @app.post("/speak")
 async def speak(req: SpeechRequest):
-    """Proxy speech to the dedicated XTTS-v2 ZeroGPU Space. No preset-voice fallback."""
+    """Proxy speech to the private XTTS-v2 Gradio Space."""
     if not VOICE_API_URL:
         raise HTTPException(status_code=503, detail="JARVIS voice service URL is not configured.")
+    if not VOICE_API_KEY:
+        raise HTTPException(status_code=503, detail="JARVIS voice service key is not configured.")
     text = " ".join(req.text.split())
     if not text:
         raise HTTPException(status_code=400, detail="Speech text is empty.")
-    sample_url = "https://raw.githubusercontent.com/thenotoriouscassim-svg/cassimtv3/main/assets/audio/jarvis_boot.mp3"
-    sample_path = None
     try:
         from gradio_client import Client
 
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as http:
-            sample_response = await http.get(sample_url)
-            sample_response.raise_for_status()
-        if len(sample_response.content) < 1000:
-            raise RuntimeError("The JARVIS reference recording could not be downloaded.")
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as sample_file:
-            sample_file.write(sample_response.content)
-            sample_path = sample_file.name
-
         def generate():
             client = Client(VOICE_API_URL, verbose=False)
-            return client.predict(text[:2500], sample_path, api_name="/predict")
+            return client.predict(text[:2500], VOICE_API_KEY, api_name="/generate")
 
         result = await asyncio.wait_for(asyncio.to_thread(generate), timeout=240)
         audio_path = result.get("path") if isinstance(result, dict) else result
@@ -145,15 +137,10 @@ async def speak(req: SpeechRequest):
         print(f"JARVIS voice generation error: {type(exc).__name__}: {exc}")
         message = str(exc).lower()
         if "quota" in message or "zerogpu" in message or "gpu" in message:
-            raise HTTPException(status_code=503, detail="The public voice Space is busy or its free GPU quota is exhausted. Try again later.")
-        raise HTTPException(status_code=502, detail="JARVIS could not generate speech through the public XTTS voice Space.")
-    finally:
-        if sample_path:
-            try:
-                os.remove(sample_path)
-            except OSError:
-                pass
- 
+            raise HTTPException(status_code=503, detail="The private voice Space is busy or its free GPU quota is exhausted. Try again later.")
+        raise HTTPException(status_code=502, detail="JARVIS could not generate speech through its XTTS voice Space.")
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
     if not GEMINI_API_KEY:
