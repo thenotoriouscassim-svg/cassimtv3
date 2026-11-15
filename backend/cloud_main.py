@@ -9,13 +9,17 @@ from typing import Dict, List, Optional
 
 import httpx
 import psutil
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 APP_STARTED = time.time()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "").strip()
+VOICE_SETUP_TOKEN = os.getenv("VOICE_SETUP_TOKEN", "").strip()
+VOICE_SAMPLE_BASE = "https://raw.githubusercontent.com/thenotoriouscassim-svg/cassimtv3/main/assets/audio"
 
 JARVIS_SYSTEM_PROMPT = """You are JARVIS, a personal AI assistant created for and by CassimTV.
 
@@ -65,7 +69,99 @@ async def health():
         "brand": "CassimTV",
         "ai_configured": bool(GEMINI_API_KEY),
         "model": GEMINI_MODEL if GEMINI_API_KEY else None,
+        "voice_configured": bool(ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID),
     }
+
+
+@app.post("/voice/clone")
+async def clone_reference_voice(x_setup_token: str = Header(default="")):
+    """Create the JARVIS voice from the three repository reference recordings.
+
+    Configure ELEVENLABS_API_KEY and VOICE_SETUP_TOKEN in Render first.
+    Save the returned voice_id as ELEVENLABS_VOICE_ID in Render afterwards.
+    """
+    global ELEVENLABS_VOICE_ID
+    if not ELEVENLABS_API_KEY:
+        raise HTTPException(status_code=503, detail="Add ELEVENLABS_API_KEY to the Render environment first.")
+    if not VOICE_SETUP_TOKEN or x_setup_token != VOICE_SETUP_TOKEN:
+        raise HTTPException(status_code=403, detail="Voice setup token is missing or incorrect.")
+    if ELEVENLABS_VOICE_ID:
+        return {"status": "already_configured", "voice_id": ELEVENLABS_VOICE_ID}
+
+    sample_names = [
+        "jarvis_boot.mp3",
+        "jarvis_request_root.mp3",
+        "jarvis_app_closed.mp3",
+    ]
+    try:
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+            uploads = []
+            for filename in sample_names:
+                sample = await client.get(f"{VOICE_SAMPLE_BASE}/{filename}")
+                sample.raise_for_status()
+                uploads.append(("files", (filename, sample.content, "audio/mpeg")))
+            result = await client.post(
+                "https://api.elevenlabs.io/v1/voices/add",
+                headers={"xi-api-key": ELEVENLABS_API_KEY},
+                data={
+                    "name": "JARVIS AI by CassimTV",
+                    "description": "Voice clone created from the three supplied JARVIS reference recordings.",
+                    "remove_background_noise": "false",
+                },
+                files=uploads,
+            )
+        if result.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"Voice cloning provider error: {result.text[:700]}")
+        payload = result.json()
+        voice_id = payload.get("voice_id")
+        if not voice_id:
+            raise HTTPException(status_code=502, detail="Voice provider did not return a voice ID.")
+        ELEVENLABS_VOICE_ID = voice_id
+        return {
+            "status": "created",
+            "voice_id": voice_id,
+            "requires_verification": payload.get("requires_verification", False),
+            "next_step": "Save this voice ID as ELEVENLABS_VOICE_ID in Render, then redeploy.",
+        }
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Could not retrieve the three reference recordings: {exc}")
+
+class SpeechRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=5000)
+
+@app.post("/speak")
+async def speak(req: SpeechRequest):
+    if not ELEVENLABS_API_KEY or not ELEVENLABS_VOICE_ID:
+        raise HTTPException(status_code=503, detail="The JARVIS reference voice has not been configured yet.")
+    try:
+        async with httpx.AsyncClient(timeout=90) as client:
+            result = await client.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
+                params={"output_format": "mp3_44100_128"},
+                headers={
+                    "xi-api-key": ELEVENLABS_API_KEY,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "text": req.text,
+                    "model_id": "eleven_flash_v2_5",
+                    "voice_settings": {
+                        "stability": 0.55,
+                        "similarity_boost": 0.85,
+                        "style": 0.15,
+                        "use_speaker_boost": True,
+                    },
+                },
+            )
+        if result.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"Voice synthesis failed: {result.text[:500]}")
+        return Response(content=result.content, media_type="audio/mpeg")
+    except HTTPException:
+        raise
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="JARVIS could not reach the voice synthesis service.")
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
