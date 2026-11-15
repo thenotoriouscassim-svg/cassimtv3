@@ -31,6 +31,10 @@ class _JarvisCoreWidgetState extends State<JarvisCoreWidget>
       duration: const Duration(seconds: 8),
     )..repeat();
 
+    _pulseAnim = Tween<double>(begin: 0.95, end: 1.05).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+    _rotateAnim = Tween<double>(begin: 0, end: 2 * pi).animate(_rotateController);
   }
 
   @override
