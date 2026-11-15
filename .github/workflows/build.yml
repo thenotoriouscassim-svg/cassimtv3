@@ -42,7 +42,7 @@ jobs:
             cp /tmp/jarvis-custom-manifest.xml android/app/src/main/AndroidManifest.xml
           fi
 
-      - name: Install Android SDK 35
+      - name: Install Android SDK 35 and NDK
         shell: bash
         run: |
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
@@ -51,7 +51,7 @@ jobs:
             exit 1
           fi
           yes | "$SDKMANAGER" --licenses || true
-          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "ndk;26.1.10909125"
 
       - name: Configure Android build versions
         shell: bash
@@ -60,8 +60,6 @@ jobs:
           from pathlib import Path
           import re
 
-          # Android 35 needs a newer Android Gradle Plugin/AAPT2 than the
-          # Flutter 3.22 scaffold ships with.
           settings = Path("android/settings.gradle")
           source = settings.read_text()
           source, agp_count = re.subn(
@@ -102,8 +100,22 @@ jobs:
           )
           if min_count != 1:
               raise SystemExit(f"Expected one minSdkVersion declaration, found {min_count}")
+
+          # Align Java and Kotlin bytecode targets and pin the NDK required by plugins.
+          source = source.replace("JavaVersion.VERSION_1_8", "JavaVersion.VERSION_17")
+          source = source.replace("jvmTarget = '1.8'", "jvmTarget = '17'")
+          source = source.replace('jvmTarget = "1.8"', 'jvmTarget = "17"')
+          if "ndkVersion" not in source:
+              source, android_count = re.subn(
+                  r"(?m)^(android\s*\{)",
+                  r'\1\n    ndkVersion "26.1.10909125"',
+                  source,
+                  count=1,
+              )
+              if android_count != 1:
+                  raise SystemExit("Could not find the android { } block to set ndkVersion")
           app_gradle.write_text(source)
-          print("AGP 8.6.1, Kotlin 1.9.24, Gradle 8.7, compile/target SDK 35, minSdk 24 configured")
+          print("Configured AGP 8.6.1, Kotlin 1.9.24, Gradle 8.7, SDK 35, minSdk 24, Java/Kotlin 17, NDK 26.1.10909125")
           PY
 
       - name: Get dependencies
