@@ -10,6 +10,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
       - name: Checkout code
@@ -28,8 +31,6 @@ jobs:
           channel: 'stable'
           cache: true
 
-      # This repository does not track the generated Android Gradle project.
-      # Generate the Flutter scaffold, preserving the custom manifest.
       - name: Restore missing Android project
         shell: bash
         run: |
@@ -44,11 +45,14 @@ jobs:
       - name: Install Android SDK 34
         shell: bash
         run: |
-          yes | sdkmanager --licenses
-          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found under $ANDROID_HOME/cmdline-tools"
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses
+          "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0"
 
-      # Flutter 3.16's generated scaffold pins Kotlin 1.7.x, which cannot
-      # compile dependencies carrying Kotlin 1.9 metadata.
       - name: Configure Android and Kotlin versions
         shell: bash
         run: |
