@@ -63,8 +63,8 @@ jobs:
           settings = Path("android/settings.gradle")
           text = settings.read_text()
           text, count = re.subn(
-              r'(id\\s+["\\']org\\.jetbrains\\.kotlin\\.android["\\']\\s+version\\s+["\\'])[^"\\']+(["\\'])',
-              r'\\g<1>1.9.22\\g<2>',
+              r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])[^"\']+(["\'])',
+              r'\g<1>1.9.22\g<2>',
               text,
           )
           if count != 1:
@@ -74,7 +74,7 @@ jobs:
           app_gradle = Path("android/app/build.gradle")
           text = app_gradle.read_text()
           text, count = re.subn(
-              r'compileSdk(?:Version)?\\s+flutter\\.compileSdkVersion',
+              r'compileSdk(?:Version)?\s+flutter\.compileSdkVersion',
               'compileSdk 34',
               text,
           )
