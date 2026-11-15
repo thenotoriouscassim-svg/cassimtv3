@@ -43,6 +43,8 @@ jobs:
             if [ -f /tmp/jarvis-custom-manifest.xml ]; then
               cp /tmp/jarvis-custom-manifest.xml android/app/src/main/AndroidManifest.xml
             fi
+            # Flutter's generated sample test references MyApp, but this app entry point is JarvisApp.
+            rm -f test/widget_test.dart
           fi
           test -f android/settings.gradle || test -f android/settings.gradle.kts
           test -f android/gradlew
