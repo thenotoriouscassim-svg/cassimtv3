@@ -80,8 +80,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _infoRow('Developer', 'CassimTV'),
           _infoRow('Version', '1.0.0'),
           _infoRow('AI Engine', 'Google Gemini (Cloud)'),
-          _infoRow('Voice Engine', 'Android system text-to-speech'),
-          _infoRow('Speech Input', 'Android speech recognition'),
+          _infoRow('Voice Engine', 'Piper / Sherpa-ONNX (offline neural)'),
+          _infoRow('Speech Input', 'Gemini audio transcription'),
           _infoRow('Wake Word', 'Requires Porcupine setup'),
           const SizedBox(height: 32),
 
