@@ -62,10 +62,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 8),
           _label('Backend Server URL'),
           const SizedBox(height: 6),
-          _textField(_urlController, 'e.g. http://192.168.1.100:8000'),
+          _textField(_urlController, 'https://cassimtv3.onrender.com'),
           const SizedBox(height: 4),
           Text(
-            'Enter the IP address of the machine running the JARVIS backend.\nMust be on the same WiFi network.',
+            'JARVIS connects to its secure cloud server. You can change the server URL here.',
             style: TextStyle(color: JarvisColors.textDim, fontSize: 9,
               height: 1.6, fontFamily: 'Orbitron'),
           ),
@@ -82,10 +82,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _infoRow('App', 'JARVIS AI'),
           _infoRow('Developer', 'CassimTV'),
           _infoRow('Version', '1.0.0'),
-          _infoRow('AI Engine', 'Ollama (Local, Free)'),
-          _infoRow('Voice Engine', 'Coqui XTTS-v2 (Local, Free)'),
-          _infoRow('STT Engine', 'Faster-Whisper (Local, Free)'),
-          _infoRow('Wake Word', 'openWakeWord (Local, Free)'),
+          _infoRow('AI Engine', 'Google Gemini (Cloud)'),
+          _infoRow('Voice Engine', 'Not connected yet'),
+          _infoRow('STT Engine', 'Not connected yet'),
+          _infoRow('Wake Word', 'Not connected to cloud yet'),
           const SizedBox(height: 32),
 
           ElevatedButton(
