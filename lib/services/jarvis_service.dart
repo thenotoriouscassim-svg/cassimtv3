@@ -391,6 +391,25 @@ class JarvisService extends ChangeNotifier {
   Future<void> sendTextMessage(String text) async {
     if (text.trim().isEmpty) return;
 
+    // Route explicit search commands and natural weather questions to live search.
+    final trimmed = text.trim();
+    final searchCommand = RegExp(
+      r"^(?:please\\s+)?(?:search(?:\\s+the\\s+web)?|look\\s+up|google|find\\s+online)(?:\\s+for)?\\s*[:,-]?\\s*(.+)$",
+      caseSensitive: false,
+    ).firstMatch(trimmed);
+    final weatherCommand = RegExp(
+      r"^(?:what(?:'s| is)\\s+)?(?:the\\s+)?(.+?)\\s+(?:weather|forecast)(?:\\s+today|\\s+tomorrow)?\\??$",
+      caseSensitive: false,
+    ).firstMatch(trimmed);
+    if (searchCommand != null && (searchCommand.group(1)?.trim().length ?? 0) >= 2) {
+      await searchWeb(searchCommand.group(1)!.trim());
+      return;
+    }
+    if (weatherCommand != null) {
+      await searchWeb("${weatherCommand.group(1)!.trim()} weather");
+      return;
+    }
+
     // Send only earlier turns; the backend appends the current message itself.
     final history = _conversation
         .map((m) => {'role': m.role.name, 'content': m.content})
