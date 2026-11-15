@@ -234,6 +234,7 @@ class JarvisService extends ChangeNotifier {
         return;
       }
       await _ttsPlayer.stop();
+      await _ttsPlayer.setVolume(0.65);
       _setState(JarvisState.speaking);
       try {
         final completed = _ttsPlayer.onPlayerComplete.first;
