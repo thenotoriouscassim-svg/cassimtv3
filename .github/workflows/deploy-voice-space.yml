@@ -13,7 +13,7 @@ on:
 
 jobs:
   deploy:
-    if: \${{ secrets.HF_TOKEN != '' && secrets.HF_SPACE_REPO_ID != '' && secrets.JARVIS_VOICE_API_KEY != '' }}
+    if: ${{ secrets.HF_TOKEN != '' && secrets.HF_SPACE_REPO_ID != '' && secrets.JARVIS_VOICE_API_KEY != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,9 +34,9 @@ jobs:
           cp assets/audio/jarvis_app_closed.mp3 hf-space/samples/
       - name: Create Space, set API secret and deploy
         env:
-          HF_TOKEN: \${{ secrets.HF_TOKEN }}
-          HF_SPACE_REPO_ID: \${{ secrets.HF_SPACE_REPO_ID }}
-          JARVIS_VOICE_API_KEY: \${{ secrets.JARVIS_VOICE_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_REPO_ID: ${{ secrets.HF_SPACE_REPO_ID }}
+          JARVIS_VOICE_API_KEY: ${{ secrets.JARVIS_VOICE_API_KEY }}
         run: |
           python - <<'PY'
           import os
