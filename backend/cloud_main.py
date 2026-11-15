@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 APP_STARTED = time.time()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+GEMINI_MODEL = "gemini-3.8-flash"  # Pin the working model; ignore stale Render overrides.
 FISH_API_KEY = os.getenv("FISH_API_KEY", "").strip()
 FISH_AUDIO_VOICE_ID = os.getenv("FISH_AUDIO_VOICE_ID", "").strip()
 FISH_AUDIO_MODEL = os.getenv("FISH_AUDIO_MODEL", "s2.1-pro-free").strip()
@@ -219,7 +219,7 @@ async def live_search(req: SearchRequest):
                 "parts": [{"text": f"Search the live web for this query: {query}. Give a concise, useful answer based on current sources. Clearly distinguish verified facts from uncertainty."}]
             }],
             "tools": [{"google_search": {}}],
-            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200},
+            "generationConfig": {"maxOutputTokens": 1200, "thinkingConfig": {"thinkingLevel": "medium"}},
         }
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
         try:
@@ -294,7 +294,7 @@ async def chat(req: ChatRequest):
         "system_instruction": {"parts": [{"text": JARVIS_SYSTEM_PROMPT}]},
         "contents": contents,
         # Use Gemini Flash maximum supported output budget for long code and detailed answers.
-        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 65536},
+        "generationConfig": {"maxOutputTokens": 65536, "thinkingConfig": {"thinkingLevel": "high"}},
     }
     try:
         async with httpx.AsyncClient(timeout=240) as client:
