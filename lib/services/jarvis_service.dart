@@ -113,10 +113,11 @@ class JarvisService extends ChangeNotifier {
       }
 
       await piper.initBindingsAsync();
-      final espeakData = await piper.extractEspeakNgData();
-      final phonemizerStatus = piper.PiperPhonemize.initialize(espeakData);
+      // piper_phonemize bundles espeak-ng-data with its Flutter package.
+      // An empty path selects that bundled data on Android.
+      final phonemizerStatus = piper.PiperPhonemize.initialize('');
       if (phonemizerStatus < 0) {
-        throw Exception('Piper could not initialize espeak-ng data at: $espeakData');
+        throw Exception('Piper could not initialize its bundled espeak-ng data (status: $phonemizerStatus).');
       }
       final testPhonemes = piper.PiperPhonemize.phonemize(
         'JARVIS voice test', voice: 'en-gb',
