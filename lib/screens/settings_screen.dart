@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:provider/provider.dart';
+import '../services/jarvis_service.dart';
 import '../utils/constants.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -10,7 +12,6 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _urlController = TextEditingController();
-  bool _wakeWordEnabled = true;
   bool _autoSpeak = true;
 
   @override
@@ -23,7 +24,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _urlController.text = prefs.getString('backend_url') ?? JarvisStrings.backendUrl;
-      _wakeWordEnabled    = prefs.getBool('wake_word_enabled') ?? true;
       _autoSpeak          = prefs.getBool('auto_speak') ?? true;
     });
   }
@@ -31,8 +31,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('backend_url', _urlController.text.trim());
-    await prefs.setBool('wake_word_enabled', _wakeWordEnabled);
-    await prefs.setBool('auto_speak', _autoSpeak);
+    await context.read<JarvisService>().setAutoSpeak(_autoSpeak);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -72,9 +71,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 24),
 
           _section('VOICE SETTINGS'),
-          _toggle('Wake Word Detection ("Jarvis!")', _wakeWordEnabled,
-              (v) => setState(() => _wakeWordEnabled = v)),
-          _toggle('Auto-Speak Responses', _autoSpeak,
+          _toggle('Speak AI responses aloud', _autoSpeak,
               (v) => setState(() => _autoSpeak = v)),
           const SizedBox(height: 24),
 
@@ -83,9 +80,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _infoRow('Developer', 'CassimTV'),
           _infoRow('Version', '1.0.0'),
           _infoRow('AI Engine', 'Google Gemini (Cloud)'),
-          _infoRow('Voice Engine', 'Not connected yet'),
-          _infoRow('STT Engine', 'Not connected yet'),
-          _infoRow('Wake Word', 'Not connected to cloud yet'),
+          _infoRow('Voice Engine', 'Android system text-to-speech'),
+          _infoRow('Speech Input', 'Android speech recognition'),
+          _infoRow('Wake Word', 'Requires Porcupine setup'),
           const SizedBox(height: 32),
 
           ElevatedButton(
