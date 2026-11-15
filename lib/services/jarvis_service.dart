@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 import '../utils/constants.dart';
 import '../models/message.dart';
 import '../models/system_stats.dart';
@@ -17,7 +16,6 @@ class JarvisService extends ChangeNotifier {
   SystemStats _systemStats = SystemStats.empty();
   String _statusText = JarvisStrings.standby;
   bool _isConnected = false;
-  WebSocketChannel? _wsChannel;
   Timer? _statsTimer;
   final AudioPlayer _ttsPlayer = AudioPlayer();
   String _backendUrl = JarvisStrings.backendUrl;
@@ -120,7 +118,6 @@ class JarvisService extends ChangeNotifier {
         final health = jsonDecode(response.body) as Map<String, dynamic>;
         _isConnected =
             health['status'] == 'online' && health['ai_configured'] == true;
-        if (_isConnected) _connectWebSocket();
       } else {
         _isConnected = false;
       }
@@ -128,36 +125,6 @@ class JarvisService extends ChangeNotifier {
     } catch (_) {
       _isConnected = false;
       notifyListeners();
-    }
-  }
-
-  void _connectWebSocket() {
-    try {
-      final wsUrl = _backendUrl
-          .replaceFirst('https://', 'wss://')
-          .replaceFirst('http://', 'ws://');
-      _wsChannel = WebSocketChannel.connect(Uri.parse('$wsUrl/ws'));
-      _wsChannel!.stream.listen(
-        _handleWebSocketMessage,
-        onDone: () {
-          // WebSocket is optional; REST chat and speech can remain online.
-        },
-        onError: (_) {
-          // A failed optional socket must not mark the HTTP backend offline.
-        },
-      );
-    } catch (_) {
-      // Text chat remains available if the optional socket cannot connect.
-    }
-  }
-
-  void _handleWebSocketMessage(dynamic data) {
-    final Map<String, dynamic> msg = jsonDecode(data);
-    switch (msg['type']) {
-      case 'stats':
-        _systemStats = SystemStats.fromJson(msg['data']);
-        notifyListeners();
-        break;
     }
   }
 
@@ -171,12 +138,12 @@ class JarvisService extends ChangeNotifier {
 
   String _makeSpeakable(String text) {
     return text
-        .replaceAll(RegExp(r'```[\\s\\S]*?```'), ' Code omitted. ')
+        .replaceAll(RegExp(r'```[\s\S]*?```'), ' Code omitted. ')
         .replaceAll(RegExp(r'`[^`]*`'), ' ')
-        .replaceAll(RegExp(r'!\\[([^\\]]*)\\]\\([^)]*\\)'), r'$1')
-        .replaceAll(RegExp(r'\\[([^\\]]+)\\]\\([^)]*\\)'), r'$1')
+        .replaceAll(RegExp(r'!\[([^\]]*)\]\([^)]*\)'), r'$1')
+        .replaceAll(RegExp(r'\[([^\]]+)\]\([^)]*\)'), r'$1')
         .replaceAll(RegExp(r'[#*_>~]'), ' ')
-        .replaceAll(RegExp(r'\\s+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
   }
 
@@ -359,7 +326,6 @@ class JarvisService extends ChangeNotifier {
   @override
   void dispose() {
     _statsTimer?.cancel();
-    _wsChannel?.sink.close();
     _ttsPlayer.dispose();
     super.dispose();
   }
