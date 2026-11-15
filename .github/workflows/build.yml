@@ -50,7 +50,7 @@ jobs:
             echo "sdkmanager not found under $ANDROID_HOME/cmdline-tools"
             exit 1
           fi
-          yes | "$SDKMANAGER" --licenses
+          yes | "$SDKMANAGER" --licenses || true
           "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Configure Android and Kotlin versions
