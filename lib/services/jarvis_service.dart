@@ -12,7 +12,7 @@ enum JarvisState { standby, wakeWordDetected, listening, processing, speaking }
 
 class JarvisService extends ChangeNotifier {
   JarvisState _state = JarvisState.standby;
-  List<Message> _conversation = [];
+  final List<Message> _conversation = [];
   SystemStats _systemStats = SystemStats.empty();
   String _statusText = JarvisStrings.standby;
   bool _isConnected = false;
@@ -22,7 +22,6 @@ class JarvisService extends ChangeNotifier {
   double _audioLevel = 0.0;
   String _backendUrl = JarvisStrings.backendUrl;
 
-  // Getters
   JarvisState get state => _state;
   List<Message> get conversation => List.unmodifiable(_conversation);
   SystemStats get systemStats => _systemStats;
@@ -41,31 +40,31 @@ class JarvisService extends ChangeNotifier {
       final savedUrl = prefs.getString('backend_url');
       if (savedUrl != null && savedUrl.trim().isNotEmpty) {
         _backendUrl = _normalizeUrl(savedUrl);
-      } else {
-        _backendUrl = JarvisStrings.backendUrl;
       }
     } catch (_) {
-      _backendUrl = JarvisStrings.backendUrl;
+      // Use the cloud URL default if preferences are unavailable.
     }
     await _connectToBackend();
     _startStatsPolling();
   }
 
-  String _normalizeUrl(String value) => value.trim().replaceAll(RegExp(r'/+
-
-  // ─── Backend Connection ───────────────────────────────────────────────
+  String _normalizeUrl(String value) =>
+      value.trim().replaceAll(RegExp(r'/+$'), '');
 
   Future<void> _connectToBackend() async {
     try {
       final response = await http
           .get(Uri.parse('$_backendUrl/health'))
-           .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 10));
       if (response.statusCode == 200) {
         final health = jsonDecode(response.body) as Map<String, dynamic>;
-        _isConnected = health['online'] == true && health['ai_configured'] == true;
+        _isConnected =
+            health['online'] == true && health['ai_configured'] == true;
         if (_isConnected) _connectWebSocket();
-        notifyListeners();
+      } else {
+        _isConnected = false;
       }
+      notifyListeners();
     } catch (_) {
       _isConnected = false;
       notifyListeners();
@@ -75,15 +74,23 @@ class JarvisService extends ChangeNotifier {
   void _connectWebSocket() {
     try {
       final wsUrl = _backendUrl
-          .replaceFirst('http', 'ws')
-          .replaceFirst('https', 'wss');
+          .replaceFirst('https://', 'wss://')
+          .replaceFirst('http://', 'ws://');
       _wsChannel = WebSocketChannel.connect(Uri.parse('$wsUrl/ws'));
       _wsChannel!.stream.listen(
         _handleWebSocketMessage,
-        onDone: () { _isConnected = false; notifyListeners(); },
-        onError: (_) { _isConnected = false; notifyListeners(); },
+        onDone: () {
+          _isConnected = false;
+          notifyListeners();
+        },
+        onError: (_) {
+          _isConnected = false;
+          notifyListeners();
+        },
       );
-    } catch (_) {}
+    } catch (_) {
+      // Text chat remains available if the optional socket cannot connect.
+    }
   }
 
   void _handleWebSocketMessage(dynamic data) {
@@ -114,25 +121,22 @@ class JarvisService extends ChangeNotifier {
     }
   }
 
-  // ─── State Management ────────────────────────────────────────────────
-
   void _setState(JarvisState newState) {
     _state = newState;
     _statusText = switch (newState) {
-      JarvisState.standby          => JarvisStrings.standby,
+      JarvisState.standby => JarvisStrings.standby,
       JarvisState.wakeWordDetected => 'ACTIVATED',
-      JarvisState.listening        => JarvisStrings.listening,
-      JarvisState.processing       => JarvisStrings.processing,
-      JarvisState.speaking         => JarvisStrings.speaking,
+      JarvisState.listening => JarvisStrings.listening,
+      JarvisState.processing => JarvisStrings.processing,
+      JarvisState.speaking => JarvisStrings.speaking,
     };
     notifyListeners();
   }
 
-  // ─── Sending Messages ────────────────────────────────────────────────
-
   Future<void> sendTextMessage(String text) async {
     if (text.trim().isEmpty) return;
 
+    // Send only earlier turns; the backend appends the current message itself.
     final history = _conversation
         .map((m) => {'role': m.role.name, 'content': m.content})
         .toList();
@@ -142,43 +146,49 @@ class JarvisService extends ChangeNotifier {
       content: text,
       timestamp: DateTime.now(),
     ));
-
     _setState(JarvisState.processing);
 
     try {
-      final response = await http.post(
-        Uri.parse('$_backendUrl/chat'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'message': text,
-          'conversation_history': history,
-        }),
-      ).timeout(const Duration(seconds: 75));
+      final response = await http
+          .post(
+            Uri.parse('$_backendUrl/chat'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'message': text,
+              'conversation_history': history,
+            }),
+          )
+          .timeout(const Duration(seconds: 75));
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
         _addMessage(Message(
           role: MessageRole.assistant,
-          content: data['response'],
+          content: data['response']?.toString() ?? 'No response received, sir.',
           timestamp: DateTime.now(),
         ));
         _setState(JarvisState.speaking);
         await Future.delayed(const Duration(seconds: 2));
         _setState(JarvisState.standby);
       } else {
-        final detail = (jsonDecode(response.body) as Map<String, dynamic>)['detail'];
+        String detail = 'Cloud service returned HTTP ${response.statusCode}.';
+        try {
+          detail = (jsonDecode(response.body) as Map<String, dynamic>)['detail']
+                  ?.toString() ??
+              detail;
+        } catch (_) {}
         _addMessage(Message(
           role: MessageRole.assistant,
-          content: detail?.toString() ?? 'The cloud service returned HTTP ${response.statusCode}, sir.',
+          content: detail,
           timestamp: DateTime.now(),
           isError: true,
         ));
         _setState(JarvisState.standby);
       }
-    } catch (e) {
+    } catch (_) {
       _addMessage(Message(
         role: MessageRole.assistant,
-        content: 'I appear to be having trouble reaching my systems, sir. Please check the backend connection.',
+        content: 'I appear to be having trouble reaching my cloud systems, sir.',
         timestamp: DateTime.now(),
         isError: true,
       ));
@@ -190,7 +200,7 @@ class JarvisService extends ChangeNotifier {
     if (!_isConnected) {
       _addMessage(Message(
         role: MessageRole.assistant,
-        content: 'Backend not connected, sir. Please ensure the JARVIS server is running.',
+        content: 'Cloud backend not connected, sir. Please check your connection.',
         timestamp: DateTime.now(),
         isError: true,
       ));
@@ -207,9 +217,7 @@ class JarvisService extends ChangeNotifier {
 
   void _addMessage(Message message) {
     _conversation.add(message);
-    if (_conversation.length > 100) {
-      _conversation.removeAt(0);
-    }
+    if (_conversation.length > 100) _conversation.removeAt(0);
     notifyListeners();
   }
 
@@ -218,15 +226,13 @@ class JarvisService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── System Stats ────────────────────────────────────────────────────
-
   void _startStatsPolling() {
     _statsTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
       if (!_isConnected) return;
       try {
-        final response = await http.get(
-          Uri.parse('$_backendUrl/stats'),
-        ).timeout(const Duration(seconds: 2));
+        final response = await http
+            .get(Uri.parse('$_backendUrl/stats'))
+            .timeout(const Duration(seconds: 5));
         if (response.statusCode == 200) {
           _systemStats = SystemStats.fromJson(jsonDecode(response.body));
           notifyListeners();
@@ -250,210 +256,24 @@ class JarvisService extends ChangeNotifier {
           content: data['response'],
           timestamp: DateTime.now(),
         ));
-      }
-    } catch (_) {}
-  }
-
-  Future<void> retryConnection() async {
-    await _connectToBackend();
-  }
-
-  @override
-  void dispose() {
-    _statsTimer?.cancel();
-    _wsChannel?.sink.close();
-    super.dispose();
-  }
-}
-), '');
-
-  // ─── Backend Connection ───────────────────────────────────────────────
-
-  Future<void> _connectToBackend() async {
-    try {
-      final response = await http
-          .get(Uri.parse('${JarvisStrings.backendUrl}/health'))
-          .timeout(const Duration(seconds: 3));
-      if (response.statusCode == 200) {
-        _isConnected = true;
-        _connectWebSocket();
-        notifyListeners();
+      } else {
+        final detail =
+            (jsonDecode(response.body) as Map<String, dynamic>)['detail'];
+        _addMessage(Message(
+          role: MessageRole.assistant,
+          content: detail?.toString() ?? 'Command was not executed, sir.',
+          timestamp: DateTime.now(),
+          isError: true,
+        ));
       }
     } catch (_) {
-      _isConnected = false;
-      notifyListeners();
-    }
-  }
-
-  void _connectWebSocket() {
-    try {
-      final wsUrl = JarvisStrings.backendUrl
-          .replaceFirst('http', 'ws')
-          .replaceFirst('https', 'wss');
-      _wsChannel = WebSocketChannel.connect(Uri.parse('$wsUrl/ws'));
-      _wsChannel!.stream.listen(
-        _handleWebSocketMessage,
-        onDone: () { _isConnected = false; notifyListeners(); },
-        onError: (_) { _isConnected = false; notifyListeners(); },
-      );
-    } catch (_) {}
-  }
-
-  void _handleWebSocketMessage(dynamic data) {
-    final Map<String, dynamic> msg = jsonDecode(data);
-    switch (msg['type']) {
-      case 'state_change':
-        _setState(JarvisState.values.byName(msg['state']));
-        break;
-      case 'transcript':
-        _currentTranscript = msg['text'] ?? '';
-        notifyListeners();
-        break;
-      case 'response':
-        _addMessage(Message(
-          role: MessageRole.assistant,
-          content: msg['text'] ?? '',
-          timestamp: DateTime.now(),
-        ));
-        break;
-      case 'audio_level':
-        _audioLevel = (msg['level'] as num).toDouble();
-        notifyListeners();
-        break;
-      case 'stats':
-        _systemStats = SystemStats.fromJson(msg['data']);
-        notifyListeners();
-        break;
-    }
-  }
-
-  // ─── State Management ────────────────────────────────────────────────
-
-  void _setState(JarvisState newState) {
-    _state = newState;
-    _statusText = switch (newState) {
-      JarvisState.standby          => JarvisStrings.standby,
-      JarvisState.wakeWordDetected => 'ACTIVATED',
-      JarvisState.listening        => JarvisStrings.listening,
-      JarvisState.processing       => JarvisStrings.processing,
-      JarvisState.speaking         => JarvisStrings.speaking,
-    };
-    notifyListeners();
-  }
-
-  // ─── Sending Messages ────────────────────────────────────────────────
-
-  Future<void> sendTextMessage(String text) async {
-    if (text.trim().isEmpty) return;
-
-    _addMessage(Message(
-      role: MessageRole.user,
-      content: text,
-      timestamp: DateTime.now(),
-    ));
-
-    _setState(JarvisState.processing);
-
-    try {
-      final response = await http.post(
-        Uri.parse('${JarvisStrings.backendUrl}/chat'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'message': text,
-          'conversation_history': _conversation
-              .map((m) => {'role': m.role.name, 'content': m.content})
-              .toList(),
-        }),
-      ).timeout(const Duration(seconds: 30));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        _addMessage(Message(
-          role: MessageRole.assistant,
-          content: data['response'],
-          timestamp: DateTime.now(),
-        ));
-        _setState(JarvisState.speaking);
-        await Future.delayed(const Duration(seconds: 2));
-        _setState(JarvisState.standby);
-      }
-    } catch (e) {
       _addMessage(Message(
         role: MessageRole.assistant,
-        content: 'I appear to be having trouble reaching my systems, sir. Please check the backend connection.',
+        content: 'I could not contact the command service, sir.',
         timestamp: DateTime.now(),
         isError: true,
       ));
-      _setState(JarvisState.standby);
     }
-  }
-
-  Future<void> activateListening() async {
-    if (!_isConnected) {
-      _addMessage(Message(
-        role: MessageRole.assistant,
-        content: 'Backend not connected, sir. Please ensure the JARVIS server is running.',
-        timestamp: DateTime.now(),
-        isError: true,
-      ));
-      return;
-    }
-    _wsChannel?.sink.add(jsonEncode({'type': 'activate_listening'}));
-    _setState(JarvisState.listening);
-  }
-
-  Future<void> stopListening() async {
-    _wsChannel?.sink.add(jsonEncode({'type': 'stop_listening'}));
-    _setState(JarvisState.standby);
-  }
-
-  void _addMessage(Message message) {
-    _conversation.add(message);
-    if (_conversation.length > 100) {
-      _conversation.removeAt(0);
-    }
-    notifyListeners();
-  }
-
-  void clearConversation() {
-    _conversation.clear();
-    notifyListeners();
-  }
-
-  // ─── System Stats ────────────────────────────────────────────────────
-
-  void _startStatsPolling() {
-    _statsTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
-      if (!_isConnected) return;
-      try {
-        final response = await http.get(
-          Uri.parse('${JarvisStrings.backendUrl}/stats'),
-        ).timeout(const Duration(seconds: 2));
-        if (response.statusCode == 200) {
-          _systemStats = SystemStats.fromJson(jsonDecode(response.body));
-          notifyListeners();
-        }
-      } catch (_) {}
-    });
-  }
-
-  Future<void> executeCommand(String command) async {
-    if (!_isConnected) return;
-    try {
-      final response = await http.post(
-        Uri.parse('${JarvisStrings.backendUrl}/command'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'command': command}),
-      );
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        _addMessage(Message(
-          role: MessageRole.assistant,
-          content: data['response'],
-          timestamp: DateTime.now(),
-        ));
-      }
-    } catch (_) {}
   }
 
   Future<void> retryConnection() async {
