@@ -3,26 +3,20 @@ title: JARVIS Voice Clone
 emoji: 🎙️
 colorFrom: blue
 colorTo: purple
-sdk: docker
-app_port: 7860
+sdk: gradio
+python_version: "3.10"
+suggested_hardware: zero-a10g
 pinned: false
 ---
 
-# JARVIS Voice Clone API
+# JARVIS Voice Clone
 
-Private XTTS-v2 speech service for JARVIS AI by CassimTV. It uses the three
-reference recordings supplied by the owner. Gemini remains on the Render API.
+XTTS-v2 voice generation for JARVIS AI by CassimTV, running on Hugging Face ZeroGPU.
 
-## API
-- `GET /health` — service and sample status.
-- `POST /speak` — JSON body `{"text":"..." }`, requires
-  `Authorization: Bearer <JARVIS_VOICE_API_KEY>`, returns WAV audio.
+The service uses the three reference recordings supplied by the owner. The Render Gemini brain and `/chat` endpoint are separate and are not hosted here.
 
-## Space secret
-Set `JARVIS_VOICE_API_KEY` in the Space settings. Use the exact same value
-as the Render environment variable.
+The Gradio API endpoint is `/generate`. It accepts the speech text and the private service key and returns generated WAV audio.
 
-This service is intended for the owner's own voice recordings and private use.
-XTTS-v2 is distributed under the Coqui Public Model License (CPML), which
-restricts use to non-commercial purposes unless a separate commercial license
-is obtained.
+Set `JARVIS_VOICE_API_KEY` as a Space secret. The same value is used by the Render backend.
+
+XTTS-v2 is distributed under the Coqui Public Model License (CPML), which restricts use to non-commercial purposes unless a separate commercial license is obtained.
