@@ -98,6 +98,68 @@ class JarvisService extends ChangeNotifier {
     }
   }
 
+  Future<void> searchWeb(String query) async {
+    final cleanQuery = query.trim();
+    if (cleanQuery.length < 2) return;
+    _addMessage(Message(
+      role: MessageRole.user,
+      content: 'Search the web: $cleanQuery',
+      timestamp: DateTime.now(),
+    ));
+    _setState(JarvisState.processing);
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_backendUrl/search'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'query': cleanQuery}),
+          )
+          .timeout(const Duration(seconds: 90));
+      if (response.statusCode != 200) {
+        var detail = 'Live search failed (HTTP ${response.statusCode}).';
+        try {
+          detail = (jsonDecode(response.body) as Map<String, dynamic>)['detail']?.toString() ?? detail;
+        } catch (_) {}
+        throw Exception(detail);
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final answer = data['answer']?.toString().trim() ?? '';
+      if (answer.isEmpty) throw Exception('Live search returned no answer.');
+      final sources = (data['sources'] as List<dynamic>? ?? [])
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      final buffer = StringBuffer(answer);
+      if (sources.isNotEmpty) {
+        buffer.write('\n\nSources:');
+        for (final source in sources.take(8)) {
+          final title = (source['title'] ?? 'Source').toString().replaceAll('[', '(').replaceAll(']', ')');
+          final url = (source['url'] ?? '').toString();
+          if (url.startsWith('https://') || url.startsWith('http://')) {
+            buffer.write('\n- $title: $url');
+          }
+        }
+      } else {
+        buffer.write('\n\nLive search was used, but the provider returned no source links.');
+      }
+      _addMessage(Message(
+        role: MessageRole.assistant,
+        content: buffer.toString(),
+        timestamp: DateTime.now(),
+      ));
+      _setState(JarvisState.speaking);
+      await _speakResponse(answer);
+      _setState(JarvisState.standby);
+    } catch (error) {
+      _addMessage(Message(
+        role: MessageRole.assistant,
+        content: error.toString().replaceFirst('Exception: ', ''),
+        timestamp: DateTime.now(),
+        isError: true,
+      ));
+      _setState(JarvisState.standby);
+    }
+  }
+
   Future<String> transcribeAudio(File audioFile) async {
     final request = http.MultipartRequest(
       'POST',
