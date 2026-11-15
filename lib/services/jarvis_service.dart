@@ -72,122 +72,146 @@ class JarvisService extends ChangeNotifier {
   Future<void> _initializeLocalVoice() async {
     if (_localTtsReady && _neuralTts != null) return;
     try {
-      const modelName = 'vits-piper-en_GB-southern_english_male-medium-int8';
-      const modelUrl = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$modelName.tar.bz2';
+      const modelName = 'kokoro-int8-en-v0_19';
+      const modelUrl =
+          'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$modelName.tar.bz2';
 
       final supportDir = await getApplicationSupportDirectory();
       final modelDir = Directory('${supportDir.path}/$modelName');
-      final modelFile = File('${modelDir.path}/model.onnx');
+      final modelFile = File('${modelDir.path}/model.int8.onnx');
+      final voicesFile = File('${modelDir.path}/voices.bin');
       final tokensFile = File('${modelDir.path}/tokens.txt');
 
-      final modelValid = await modelFile.exists() && await modelFile.length() > 10000000;
-      final tokensValid = await tokensFile.exists() && await tokensFile.length() > 0;
-      if (!modelValid || !tokensValid) {
+      final modelValid =
+          await modelFile.exists() && await modelFile.length() > 50000000;
+      final voicesValid =
+          await voicesFile.exists() && await voicesFile.length() > 1000000;
+      final tokensValid =
+          await tokensFile.exists() && await tokensFile.length() > 100;
+      if (!modelValid || !voicesValid || !tokensValid) {
         if (await modelDir.exists()) await modelDir.delete(recursive: true);
         await modelDir.create(recursive: true);
-        final response = await http.get(Uri.parse(modelUrl))
-            .timeout(const Duration(minutes: 5));
+        final response = await http
+            .get(Uri.parse(modelUrl))
+            .timeout(const Duration(minutes: 8));
         if (response.statusCode != 200) {
-          throw Exception('Piper model download failed (HTTP ${response.statusCode}).');
+          throw Exception(
+            'Kokoro voice download failed (HTTP ${response.statusCode}).',
+          );
         }
         final tarBytes = BZip2Decoder().decodeBytes(response.bodyBytes);
         final files = TarDecoder().decodeBytes(tarBytes);
         var foundModel = false;
+        var foundVoices = false;
         var foundTokens = false;
         for (final entry in files.files) {
           if (!entry.isFile) continue;
           final name = entry.name.split('/').last;
-          if (name.endsWith('.onnx') && !foundModel) {
-            await modelFile.writeAsBytes(entry.content as List<int>, flush: true);
+          if (name == 'model.int8.onnx') {
+            await modelFile.writeAsBytes(
+              entry.content as List<int>,
+              flush: true,
+            );
             foundModel = true;
-          } else if (name == 'tokens.txt' && !foundTokens) {
-            await tokensFile.writeAsBytes(entry.content as List<int>, flush: true);
+          } else if (name == 'voices.bin') {
+            await voicesFile.writeAsBytes(
+              entry.content as List<int>,
+              flush: true,
+            );
+            foundVoices = true;
+          } else if (name == 'tokens.txt') {
+            await tokensFile.writeAsBytes(
+              entry.content as List<int>,
+              flush: true,
+            );
             foundTokens = true;
           }
         }
-        if (!foundModel || !foundTokens ||
-            await modelFile.length() <= 10000000 ||
-            await tokensFile.length() == 0) {
-          throw Exception('Piper archive downloaded, but model.onnx or tokens.txt is missing or incomplete.');
+        if (!foundModel ||
+            !foundVoices ||
+            !foundTokens ||
+            await modelFile.length() <= 50000000 ||
+            await voicesFile.length() <= 1000000 ||
+            await tokensFile.length() <= 100) {
+          throw Exception(
+            'Kokoro archive is incomplete: model.int8.onnx, voices.bin, or tokens.txt is missing.',
+          );
         }
       }
 
       await piper.initBindingsAsync();
 
-      // Extract the bundled eSpeak data and pass its REAL filesystem path
-      // to the native phonemizer. The package demo does this explicitly.
-      final espeakDataDir = Directory('${supportDir.path}/espeak-ng-data');
-      final requiredEspeakFiles = [
+      // Kokoro receives phoneme codepoints from piper_phonemize. Extract and
+      // validate the bundled eSpeak data before initializing the phonemizer.
+      final extractedEspeakPath = await piper.extractEspeakNgData();
+      final extractedEspeakDir = Directory(extractedEspeakPath);
+      if (!await extractedEspeakDir.exists()) {
+        throw Exception(
+          'eSpeak data extraction directory was not created: $extractedEspeakPath',
+        );
+      }
+      const requiredEspeakFiles = [
         'phontab',
         'phondata',
         'phonindex',
         'en_dict',
         'lang/gmw/en',
       ];
-
-      // The package caches extraction when the directory exists. Remove an
-      // incomplete cache so all bundled assets are extracted again.
-      var espeakDataComplete = await espeakDataDir.exists();
-      if (espeakDataComplete) {
-        for (final relativePath in requiredEspeakFiles) {
-          if (!await File('${espeakDataDir.path}/$relativePath').exists()) {
-            espeakDataComplete = false;
-            break;
-          }
-        }
-      }
-      if (!espeakDataComplete && await espeakDataDir.exists()) {
-        await espeakDataDir.delete(recursive: true);
-      }
-
-      final extractedEspeakPath = await piper.extractEspeakNgData();
-      final extractedEspeakDir = Directory(extractedEspeakPath);
-      if (!await extractedEspeakDir.exists()) {
-        throw Exception('eSpeak data extraction directory was not created: $extractedEspeakPath');
-      }
       for (final relativePath in requiredEspeakFiles) {
         if (!await File('$extractedEspeakPath/$relativePath').exists()) {
           throw Exception('Required eSpeak data file is missing: $relativePath');
         }
       }
 
-      // The piper_phonemize Flutter example identifies "en" as British English.
-      // This Piper model is en_GB, and sherpa's model metadata uses language "en".
       final phonemizerStatus =
           piper.PiperPhonemize.initialize(extractedEspeakPath);
       if (phonemizerStatus < 0) {
-        throw Exception('Piper could not initialize eSpeak data at $extractedEspeakPath (status: $phonemizerStatus).');
+        throw Exception(
+          'Kokoro phonemizer could not initialize eSpeak data (status: $phonemizerStatus).',
+        );
       }
       final testPhonemes = piper.PiperPhonemize.phonemize(
-        'Hello world.', voice: 'en',
+        'Hello world.',
+        voice: 'en',
       );
-      if (testPhonemes.isEmpty || testPhonemes.every((sentence) => sentence.isEmpty)) {
-        throw Exception('Piper phonemizer initialized but produced no British-English phonemes.');
+      if (testPhonemes.isEmpty ||
+          testPhonemes.every((sentence) => sentence.isEmpty)) {
+        throw Exception(
+          'Kokoro phonemizer initialized but produced no English phonemes.',
+        );
       }
 
       sherpa.initBindings();
       final modelConfig = sherpa.OfflineTtsModelConfig(
-        vits: sherpa.OfflineTtsVitsModelConfig(
+        kokoro: sherpa.OfflineTtsKokoroModelConfig(
           model: modelFile.path,
+          voices: voicesFile.path,
           tokens: tokensFile.path,
+          lang: 'en',
         ),
         numThreads: 2,
         debug: false,
+        provider: 'cpu',
       );
       final engine = sherpa.OfflineTts(
-        sherpa.OfflineTtsConfig(model: modelConfig, maxNumSentences: 1),
+        sherpa.OfflineTtsConfig(
+          model: modelConfig,
+          maxNumSentences: 1,
+        ),
       );
       _neuralTts = engine;
       _localTtsReady = true;
       _voiceConfigured = true;
       _voiceInitError = null;
-      debugPrint('Piper ready: ${modelFile.path}; phonemizer sample rate: $phonemizerStatus; TTS sample rate: ${engine.sampleRate}');
+      debugPrint(
+        'Kokoro ready: ${modelFile.path}; British male speaker ID 9 (bm_george); sample rate: ${engine.sampleRate}',
+      );
       notifyListeners();
     } catch (error) {
       _localTtsReady = false;
       _voiceConfigured = false;
       _voiceInitError = error.toString().replaceFirst('Exception: ', '');
-      debugPrint('Piper initialization failed: $_voiceInitError');
+      debugPrint('Kokoro initialization failed: $_voiceInitError');
     }
   }
 
@@ -200,8 +224,8 @@ class JarvisService extends ChangeNotifier {
       final engine = _neuralTts;
       if (!_localTtsReady || engine == null) {
         throw Exception(_voiceInitError == null
-            ? 'Piper initialization did not complete. Please retry.'
-            : 'Piper setup failed: $_voiceInitError');
+            ? 'Kokoro initialization did not complete. Please retry.'
+            : 'Kokoro setup failed: $_voiceInitError');
       }
 
       final phonemes = piper.PiperPhonemize.phonemize(text, voice: 'en')
@@ -212,9 +236,9 @@ class JarvisService extends ChangeNotifier {
       final audio = engine.generateWithConfig(
         text: '',
         config: sherpa.OfflineTtsGenerationConfig(
-          sid: 0,
+          sid: 9,
           speed: 0.96,
-          silenceScale: 0.22,
+          silenceScale: 0.2,
           phonemeCodepoints: phonemes,
         ),
       );
@@ -241,7 +265,7 @@ class JarvisService extends ChangeNotifier {
     } catch (error) {
       _addMessage(Message(
         role: MessageRole.assistant,
-        content: 'Piper voice failed: ${error.toString().replaceFirst('Exception: ', '')}',
+        content: 'Kokoro voice failed: ${error.toString().replaceFirst('Exception: ', '')}',
         timestamp: DateTime.now(),
         isError: true,
       ));
