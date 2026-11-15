@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:provider/provider.dart';
-import '../services/jarvis_service.dart';
 import '../utils/constants.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -123,15 +121,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         borderRadius: BorderRadius.circular(4),
       ),
     ),
-  );
-
-  Widget _toggle(String label, bool value, ValueChanged<bool> onChanged) => SwitchListTile(
-    title: Text(label, style: const TextStyle(
-      color: JarvisColors.textPrimary, fontSize: 11, fontFamily: 'Orbitron')),
-    value: value,
-    onChanged: onChanged,
-    activeColor: JarvisColors.cyan,
-    contentPadding: EdgeInsets.zero,
   );
 
   Widget _infoRow(String key, String val) => Padding(
