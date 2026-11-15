@@ -20,6 +20,7 @@ class _InputBarState extends State<InputBar> {
   final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
   Timer? _recordingTimer;
   String? _recordingPath;
+  String? _lastSavedRecordingPath;
   bool _recorderReady = false;
   bool _hasText = false;
   bool _isListening = false;
@@ -92,8 +93,10 @@ class _InputBarState extends State<InputBar> {
         return;
       }
 
-      final directory = await getTemporaryDirectory();
-      _recordingPath = '${directory.path}/jarvis_recording.wav';
+      final documents = await getApplicationDocumentsDirectory();
+      final recordingsDir = Directory('${documents.path}/recordings');
+      await recordingsDir.create(recursive: true);
+      _recordingPath = '${recordingsDir.path}/jarvis_${DateTime.now().millisecondsSinceEpoch}.wav';
       await _recorder.startRecorder(
         toFile: _recordingPath,
         codec: Codec.pcm16WAV,
@@ -118,32 +121,53 @@ class _InputBarState extends State<InputBar> {
   Future<void> _finishRecording() async {
     if (!_isListening) return;
     _recordingTimer?.cancel();
-    setState(() {
-      _isListening = false;
-      _isStartingListening = true;
-    });
+    if (mounted) {
+      setState(() {
+        _isListening = false;
+        _isStartingListening = true;
+      });
+    }
     try {
-      final path = await _recorder.stopRecorder();
-      final filePath = path ?? _recordingPath;
-      if (filePath == null || !await File(filePath).exists()) {
-        throw Exception('No audio recording was saved.');
+      final returnedPath = await _recorder.stopRecorder();
+      // Some Android devices finish flushing the WAV header just after stopRecorder returns.
+      await Future.delayed(const Duration(milliseconds: 250));
+      final candidates = <String?>[returnedPath, _recordingPath]
+          .whereType<String>()
+          .where((path) => path.isNotEmpty)
+          .toSet();
+      File? savedFile;
+      for (final candidate in candidates) {
+        final file = File(candidate);
+        if (await file.exists() && await file.length() >= 1000) {
+          savedFile = file;
+          break;
+        }
       }
-      final file = File(filePath);
-      if (await file.length() < 1000) {
-        throw Exception('Recording was too short. Hold the microphone and speak.');
+      if (savedFile == null) {
+        throw Exception('Android did not create the WAV recording. Check microphone permission and try again.');
       }
+      _lastSavedRecordingPath = savedFile.path;
       if (!mounted) return;
-      _showMessage('Transcribing your recording...');
+      _showMessage('Recording saved. Transcribing...');
       final jarvis = context.read<JarvisService>();
-      final transcript = await jarvis.transcribeAudio(file);
+      final transcript = await jarvis.transcribeAudio(savedFile);
       if (!mounted) return;
       _controller.text = transcript;
       jarvis.sendTextMessage(transcript);
       _controller.clear();
     } catch (error) {
-      if (mounted) _showMessage('Speech recognition error: ${error.toString().replaceFirst('Exception: ', '')}');
+      if (mounted) {
+        final saved = _lastSavedRecordingPath;
+        final suffix = saved == null ? '' : ' Recording kept at: $saved';
+        _showMessage('Speech input failed: ${error.toString().replaceFirst('Exception: ', '')}.$suffix');
+      }
     } finally {
-      if (mounted) setState(() => _isStartingListening = false);
+      if (mounted) {
+        setState(() {
+          _isStartingListening = false;
+          _isListening = false;
+        });
+      }
     }
   }
 
