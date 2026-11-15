@@ -67,8 +67,11 @@ class _ConversationPanelState extends State<ConversationPanel> {
               child: ListView.builder(
                 controller: _scroll,
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                itemCount: msgs.length,
-                itemBuilder: (_, i) => _MessageBubble(message: msgs[i]),
+                itemCount: msgs.length + (jarvis.state == JarvisState.processing ? 1 : 0),
+                itemBuilder: (_, i) {
+                  if (i < msgs.length) return _MessageBubble(message: msgs[i]);
+                  return const _ThinkingIndicator();
+                },
               ),
             ),
     );
@@ -99,6 +102,64 @@ class _ConversationPanelState extends State<ConversationPanel> {
               letterSpacing: 1,
               fontFamily: 'Orbitron',
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThinkingIndicator extends StatelessWidget {
+  const _ThinkingIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12, left: 38),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(JarvisColors.cyan),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'JARVIS',
+                style: TextStyle(
+                  color: JarvisColors.cyan,
+                  fontSize: 9,
+                  letterSpacing: 2,
+                  fontFamily: 'Orbitron',
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'GEMINI IS THINKING…',
+                style: TextStyle(
+                  color: JarvisColors.textSecondary,
+                  fontSize: 10,
+                  letterSpacing: 1.2,
+                  fontFamily: 'Orbitron',
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Please allow me a moment, sir.',
+                style: TextStyle(
+                  color: JarvisColors.textDim,
+                  fontSize: 9,
+                  fontFamily: 'Orbitron',
+                ),
+              ),
+            ],
           ),
         ],
       ),
