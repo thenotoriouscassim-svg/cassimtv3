@@ -360,7 +360,8 @@ async def chat(req: ChatRequest):
     payload = {
         "system_instruction": {"parts": [{"text": JARVIS_SYSTEM_PROMPT}]},
         "contents": contents,
-        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 700},
+        # Give coding and detailed answers enough room; 700 tokens cut long code off.
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 16384},
     }
     try:
         async with httpx.AsyncClient(timeout=60) as client:
