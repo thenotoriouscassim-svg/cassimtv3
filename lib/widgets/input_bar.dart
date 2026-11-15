@@ -1,10 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
-import 'dart:async';
-import 'dart:io';
-import 'package:flutter_sound/flutter_sound.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 import '../services/jarvis_service.dart';
 import '../utils/constants.dart';
 
@@ -17,11 +14,8 @@ class InputBar extends StatefulWidget {
 
 class _InputBarState extends State<InputBar> {
   final _controller = TextEditingController();
-  final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
-  Timer? _recordingTimer;
-  String? _recordingPath;
-  String? _lastSavedRecordingPath;
-  bool _recorderReady = false;
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  bool _speechReady = false;
   bool _hasText = false;
   bool _isListening = false;
   bool _isStartingListening = false;
@@ -46,8 +40,7 @@ class _InputBarState extends State<InputBar> {
   void dispose() {
     _controller.removeListener(_handleTextChanged);
     _controller.dispose();
-    _recordingTimer?.cancel();
-    if (_recorderReady) _recorder.closeRecorder();
+    _speech.cancel();
     super.dispose();
   }
 
@@ -58,23 +51,11 @@ class _InputBarState extends State<InputBar> {
     _controller.clear();
   }
 
-  Future<void> _initializeRecorder() async {
-    try {
-      await _recorder.openRecorder();
-      if (mounted) setState(() => _recorderReady = true);
-    } catch (error) {
-      if (mounted) _showMessage('Microphone could not initialize: $error');
-    }
-  }
-
   Future<void> _toggleListening() async {
-    if (_isStartingListening || !_recorderReady) {
-      if (!_recorderReady) _showMessage('Microphone is still initializing. Please try again.');
-      return;
-    }
-
+    if (_isStartingListening) return;
     if (_isListening) {
-      await _finishRecording();
+      await _speech.stop();
+      if (mounted) setState(() => _isListening = false);
       return;
     }
 
@@ -93,81 +74,51 @@ class _InputBarState extends State<InputBar> {
         return;
       }
 
-      final documents = await getApplicationDocumentsDirectory();
-      final recordingsDir = Directory('${documents.path}/recordings');
-      await recordingsDir.create(recursive: true);
-      _recordingPath = '${recordingsDir.path}/jarvis_${DateTime.now().millisecondsSinceEpoch}.wav';
-      await _recorder.startRecorder(
-        toFile: _recordingPath,
-        codec: Codec.pcm16WAV,
-        sampleRate: 16000,
-        numChannels: 1,
-      );
-      if (!mounted) return;
+      if (!_speechReady) {
+        _speechReady = await _speech.initialize(
+          onStatus: (status) {
+            if (!mounted) return;
+            if (status == 'notListening' || status == 'done') {
+              setState(() => _isListening = false);
+            }
+          },
+          onError: (error) {
+            if (!mounted) return;
+            setState(() => _isListening = false);
+            _showMessage('Speech recognition error: ${error.errorMsg}');
+          },
+        );
+      }
+      if (!_speechReady) {
+        throw Exception('No Android speech recognition service is available. Install or enable Google speech services.');
+      }
+
       setState(() => _isListening = true);
-      // Prevent unexpectedly long uploads; user can tap the mic again to finish sooner.
-      _recordingTimer?.cancel();
-      _recordingTimer = Timer(const Duration(seconds: 25), _finishRecording);
+      await _speech.listen(
+        localeId: 'en-ZA',
+        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 4),
+        partialResults: true,
+        cancelOnError: true,
+        onResult: (result) {
+          if (!mounted) return;
+          final words = result.recognizedWords.trim();
+          if (words.isNotEmpty) _controller.text = words;
+          if (result.finalResult && words.isNotEmpty) {
+            setState(() => _isListening = false);
+            final jarvis = context.read<JarvisService>();
+            jarvis.sendTextMessage(words);
+            _controller.clear();
+          }
+        },
+      );
     } catch (error) {
       if (mounted) {
         setState(() => _isListening = false);
-        _showMessage('Could not start microphone recording: $error');
+        _showMessage('Could not start speech input: ${error.toString().replaceFirst('Exception: ', '')}');
       }
     } finally {
       if (mounted) setState(() => _isStartingListening = false);
-    }
-  }
-
-  Future<void> _finishRecording() async {
-    if (!_isListening) return;
-    _recordingTimer?.cancel();
-    if (mounted) {
-      setState(() {
-        _isListening = false;
-        _isStartingListening = true;
-      });
-    }
-    try {
-      final returnedPath = await _recorder.stopRecorder();
-      // Some Android devices finish flushing the WAV header just after stopRecorder returns.
-      await Future.delayed(const Duration(milliseconds: 250));
-      final candidates = <String?>[returnedPath, _recordingPath]
-          .whereType<String>()
-          .where((path) => path.isNotEmpty)
-          .toSet();
-      File? savedFile;
-      for (final candidate in candidates) {
-        final file = File(candidate);
-        if (await file.exists() && await file.length() >= 1000) {
-          savedFile = file;
-          break;
-        }
-      }
-      if (savedFile == null) {
-        throw Exception('Android did not create the WAV recording. Check microphone permission and try again.');
-      }
-      _lastSavedRecordingPath = savedFile.path;
-      if (!mounted) return;
-      _showMessage('Recording saved. Transcribing...');
-      final jarvis = context.read<JarvisService>();
-      final transcript = await jarvis.transcribeAudio(savedFile);
-      if (!mounted) return;
-      _controller.text = transcript;
-      jarvis.sendTextMessage(transcript);
-      _controller.clear();
-    } catch (error) {
-      if (mounted) {
-        final saved = _lastSavedRecordingPath;
-        final suffix = saved == null ? '' : ' Recording kept at: $saved';
-        _showMessage('Speech input failed: ${error.toString().replaceFirst('Exception: ', '')}.$suffix');
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isStartingListening = false;
-          _isListening = false;
-        });
-      }
     }
   }
 
@@ -201,7 +152,7 @@ class _InputBarState extends State<InputBar> {
       ),
       child: Row(
         children: [
-          // Tap-to-talk microphone. Audio is transcribed by the cloud speech endpoint.
+          // Tap-to-talk uses Android's speech recognizer; no temporary WAV file is needed.
           GestureDetector(
             onTap: _isStartingListening ? null : _toggleListening,
             child: AnimatedContainer(
