@@ -11,7 +11,7 @@ class StatusBarWidget extends StatelessWidget {
     final jarvis = context.watch<JarvisService>();
 
     return Container(
-      height: 40,
+      height: 56,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
         color: JarvisColors.surface,
@@ -89,8 +89,8 @@ class StatusBarWidget extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
                 onTap: () => jarvis.setAutoSpeak(!jarvis.autoSpeak),
                 child: SizedBox(
-                  width: 48,
-                  height: 44,
+                  width: 52,
+                  height: 48,
                   child: Icon(
                     jarvis.autoSpeak ? Icons.volume_up : Icons.volume_off,
                     color: jarvis.autoSpeak ? JarvisColors.cyan : JarvisColors.red,
