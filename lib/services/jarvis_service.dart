@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -26,7 +25,6 @@ class JarvisService extends ChangeNotifier {
   double _audioLevel = 0.0;
   String _backendUrl = JarvisStrings.backendUrl;
   final AudioPlayer _voicePlayer = AudioPlayer();
-  final FlutterTts _deviceTts = FlutterTts();
   int _retryTicks = 0;
   bool _autoSpeak = true;
   bool _voiceConfigured = false;
@@ -41,10 +39,6 @@ class JarvisService extends ChangeNotifier {
   bool get voiceConfigured => _voiceConfigured;
 
   JarvisService() {
-    _deviceTts.setLanguage('en-US');
-    _deviceTts.setSpeechRate(0.48);
-    _deviceTts.setVolume(1.0);
-    _deviceTts.awaitSpeakCompletion(true);
     _initialize();
   }
 
@@ -69,32 +63,31 @@ class JarvisService extends ChangeNotifier {
 
   Future<void> _speakResponse(String text) async {
     if (!_autoSpeak || text.trim().isEmpty) return;
-    // Prefer the cloned JARVIS voice, but never silently leave the user with no speech.
-    if (_voiceConfigured) {
-      try {
-        final response = await http
-            .post(
-              Uri.parse('$_backendUrl/speak'),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({'text': text}),
-            )
-            .timeout(const Duration(seconds: 240));
-        if (response.statusCode == 200 && _autoSpeak && response.bodyBytes.isNotEmpty) {
-          await _voicePlayer.stop();
-          await _voicePlayer.play(BytesSource(response.bodyBytes));
-          return;
-        }
-      } catch (_) {
-        // Fall back to Android's installed TTS voice below.
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_backendUrl/speak'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'text': text}),
+          )
+          .timeout(const Duration(seconds: 100));
+      if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
+        var detail = 'Gemini speech generation failed (HTTP ${response.statusCode}).';
+        try {
+          detail = (jsonDecode(response.body) as Map<String, dynamic>)['detail']?.toString() ?? detail;
+        } catch (_) {}
+        throw Exception(detail);
       }
-    }
-    if (_autoSpeak) {
-      try {
-        await _deviceTts.stop();
-        await _deviceTts.speak(text);
-      } catch (_) {
-        // Text remains visible if the device has no working TTS engine.
-      }
+      if (!_autoSpeak) return;
+      await _voicePlayer.stop();
+      await _voicePlayer.play(BytesSource(response.bodyBytes));
+    } catch (error) {
+      _addMessage(Message(
+        role: MessageRole.assistant,
+        content: 'I could not generate my voice: ${error.toString().replaceFirst('Exception: ', '')}',
+        timestamp: DateTime.now(),
+        isError: true,
+      ));
     }
   }
 
@@ -439,7 +432,6 @@ class JarvisService extends ChangeNotifier {
     _statsTimer?.cancel();
     _wsChannel?.sink.close();
     _voicePlayer.dispose();
-    _deviceTts.stop();
     super.dispose();
   }
 }
