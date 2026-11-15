@@ -21,7 +21,9 @@ dependencies:
   flutter_sound: ^9.2.13
   permission_handler: ^11.0.1
   speech_to_text: 6.6.0
-  flutter_tts: 4.0.2
+  sherpa_onnx: 2.0.1
+  piper_phonemize: ^1.5.9
+  archive: ^3.6.1
 
   # State management
   provider: ^6.1.1
