@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../utils/constants.dart';
@@ -23,6 +26,8 @@ class JarvisService extends ChangeNotifier {
   double _audioLevel = 0.0;
   String _backendUrl = JarvisStrings.backendUrl;
   final AudioPlayer _voicePlayer = AudioPlayer();
+  final FlutterTts _deviceTts = FlutterTts();
+  int _retryTicks = 0;
   bool _autoSpeak = true;
   bool _voiceConfigured = false;
 
@@ -36,6 +41,10 @@ class JarvisService extends ChangeNotifier {
   bool get voiceConfigured => _voiceConfigured;
 
   JarvisService() {
+    _deviceTts.setLanguage('en-US');
+    _deviceTts.setSpeechRate(0.48);
+    _deviceTts.setVolume(1.0);
+    _deviceTts.awaitSpeakCompletion(true);
     _initialize();
   }
 
@@ -59,21 +68,59 @@ class JarvisService extends ChangeNotifier {
 
 
   Future<void> _speakResponse(String text) async {
-    if (!_autoSpeak || !_voiceConfigured || text.trim().isEmpty) return;
-    try {
-      final response = await http
-          .post(
-            Uri.parse('$_backendUrl/speak'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'text': text}),
-          )
-          .timeout(const Duration(seconds: 240));
-      if (response.statusCode != 200 || !_autoSpeak) return;
-      await _voicePlayer.stop();
-      await _voicePlayer.play(BytesSource(response.bodyBytes));
-    } catch (_) {
-      // Keep the text response available if cloud voice synthesis is unavailable.
+    if (!_autoSpeak || text.trim().isEmpty) return;
+    // Prefer the cloned JARVIS voice, but never silently leave the user with no speech.
+    if (_voiceConfigured) {
+      try {
+        final response = await http
+            .post(
+              Uri.parse('$_backendUrl/speak'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'text': text}),
+            )
+            .timeout(const Duration(seconds: 240));
+        if (response.statusCode == 200 && _autoSpeak && response.bodyBytes.isNotEmpty) {
+          await _voicePlayer.stop();
+          await _voicePlayer.play(BytesSource(response.bodyBytes));
+          return;
+        }
+      } catch (_) {
+        // Fall back to Android's installed TTS voice below.
+      }
     }
+    if (_autoSpeak) {
+      try {
+        await _deviceTts.stop();
+        await _deviceTts.speak(text);
+      } catch (_) {
+        // Text remains visible if the device has no working TTS engine.
+      }
+    }
+  }
+
+  Future<String> transcribeAudio(File audioFile) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$_backendUrl/transcribe'),
+    );
+    request.files.add(await http.MultipartFile.fromPath(
+      'file',
+      audioFile.path,
+      contentType: MediaType('audio', 'wav'),
+    ));
+    final streamed = await request.send().timeout(const Duration(seconds: 100));
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode != 200) {
+      var detail = 'Speech recognition failed (HTTP ${response.statusCode}).';
+      try {
+        detail = (jsonDecode(response.body) as Map<String, dynamic>)['detail']?.toString() ?? detail;
+      } catch (_) {}
+      throw Exception(detail);
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final transcript = data['transcript']?.toString().trim() ?? '';
+    if (transcript.isEmpty) throw Exception('No speech was detected.');
+    return transcript;
   }
 
   Future<void> setAutoSpeak(bool enabled) async {
@@ -118,12 +165,10 @@ class JarvisService extends ChangeNotifier {
       _wsChannel!.stream.listen(
         _handleWebSocketMessage,
         onDone: () {
-          _isConnected = false;
-          notifyListeners();
+          // WebSocket is optional; REST chat and speech can remain online.
         },
         onError: (_) {
-          _isConnected = false;
-          notifyListeners();
+          // A failed optional socket must not mark the HTTP backend offline.
         },
       );
     } catch (_) {
@@ -267,7 +312,15 @@ class JarvisService extends ChangeNotifier {
 
   void _startStatsPolling() {
     _statsTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
-      if (!_isConnected) return;
+      if (!_isConnected) {
+        _retryTicks++;
+        if (_retryTicks >= 5) {
+          _retryTicks = 0;
+          await _connectToBackend();
+        }
+        return;
+      }
+      _retryTicks = 0;
       try {
         final response = await http
             .get(Uri.parse('$_backendUrl/stats'))
@@ -324,6 +377,7 @@ class JarvisService extends ChangeNotifier {
     _statsTimer?.cancel();
     _wsChannel?.sink.close();
     _voicePlayer.dispose();
+    _deviceTts.stop();
     super.dispose();
   }
 }
