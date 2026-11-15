@@ -1,8 +1,7 @@
---extra-index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://download.pytorch.org/whl/cu128
 numpy==1.26.4
-fastapi==0.115.12
-uvicorn[standard]==0.34.2
-pydantic==2.11.3
-torch==2.5.1
-torchaudio==2.5.1
+torch==2.8.0
+torchaudio==2.8.0
 TTS==0.22.0
+gradio>=5.0,<6.0
+spaces>=0.37.0
