@@ -94,7 +94,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
     payload = {
         "contents": [{
             "parts": [
-                {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(audio_bytes).decode("ascii")}},
+                {"inlineData": {"mimeType": mime_type, "data": base64.b64encode(audio_bytes).decode("ascii")}},
                 {"text": "Transcribe the spoken words in this audio exactly. Return only the transcription. If no speech is audible, return an empty response."}
             ]
         }],
