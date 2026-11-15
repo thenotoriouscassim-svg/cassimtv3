@@ -79,10 +79,10 @@ class _ConversationPanelState extends State<ConversationPanel> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.mic_none, color: JarvisColors.textDim, size: 32),
+          Icon(Icons.chat_bubble_outline, color: JarvisColors.textDim, size: 32),
           const SizedBox(height: 12),
           Text(
-            'Say "Jarvis!" to begin',
+            'Ask JARVIS anything',
             style: TextStyle(
               color: JarvisColors.textDim,
               fontSize: 13,
