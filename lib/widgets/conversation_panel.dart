@@ -157,7 +157,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
   }
 
   Widget _messageBody(String content, TextStyle style) {
-    final pattern = RegExp(r'```([a-zA-Z0-9_+-]*)\\s*\\n([\\s\\S]*?)```');
+    final pattern = RegExp(r'```([a-zA-Z0-9_+-]*)\s*\n([\s\S]*?)```');
     final matches = pattern.allMatches(content).toList();
     if (matches.isEmpty) {
       return SelectableText.rich(_buildMessageSpan(content, style));
