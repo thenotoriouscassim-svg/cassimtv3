@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import '../services/jarvis_service.dart';
+import '../services/memory_service.dart';
 import '../utils/constants.dart';
 
 class CallScreen extends StatefulWidget {
@@ -78,7 +79,7 @@ class _CallScreenState extends State<CallScreen> {
     await _speech.stop();
     if (mounted) setState(() => _status = 'JARVIS is thinking...');
     try {
-      await context.read<JarvisService>().sendTextMessage(text.trim(), speakResponse: true);
+      await context.read<JarvisService>().sendTextMessage(text.trim(), speakResponse: true, memoryContext: context.read<MemoryService>().buildMemoryContext());
     } finally {
       _busy = false;
       _handlingTurn = false;
