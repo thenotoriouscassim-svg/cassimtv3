@@ -452,3 +452,20 @@ async def _create_fish_voice(token: str):
         raise HTTPException(status_code=504, detail="Fish Audio voice creation timed out")
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Could not create Fish Audio voice: {type(exc).__name__}")
+
+
+# One-shot bootstrap: create the private voice during startup, then disable this
+# environment flag after capturing the returned model ID from the service logs.
+@app.on_event("startup")
+async def _one_shot_fish_voice_bootstrap():
+    global FISH_AUDIO_VOICE_ID
+    if os.getenv("FISH_CLONE_ON_STARTUP", "").lower() != "true":
+        return
+    trigger = os.getenv("FISH_CLONE_TRIGGER", "")
+    try:
+        result = await _create_fish_voice(token=trigger)
+        FISH_AUDIO_VOICE_ID = result["voice_id"]
+        os.environ["FISH_AUDIO_VOICE_ID"] = FISH_AUDIO_VOICE_ID
+        print("FISH_PRIVATE_VOICE_CREATED " + json.dumps(result))
+    except Exception as exc:
+        print("FISH_PRIVATE_VOICE_CREATE_FAILED " + str(exc)[:1200])
