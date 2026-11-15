@@ -5,6 +5,7 @@ hardware dependencies are loaded by this service.
 """
 import os
 import asyncio
+import tempfile
 import time
 from typing import Dict, List, Optional
 
@@ -18,7 +19,6 @@ APP_STARTED = time.time()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
 VOICE_API_URL = os.getenv("JARVIS_VOICE_API_URL", "").strip().rstrip("/")
-VOICE_API_KEY = os.getenv("JARVIS_VOICE_API_KEY", "").strip()
 
 JARVIS_SYSTEM_PROMPT = """You are JARVIS, a personal AI assistant created for and by CassimTV.
 
@@ -68,8 +68,8 @@ async def health():
         "brand": "CassimTV",
         "ai_configured": bool(GEMINI_API_KEY),
         "model": GEMINI_MODEL if GEMINI_API_KEY else None,
-        "voice_configured": bool(VOICE_API_URL and VOICE_API_KEY),
-        "voice_engine": "Coqui XTTS-v2 voice clone" if VOICE_API_URL and VOICE_API_KEY else "Voice cloning service not connected",
+        "voice_configured": bool(VOICE_API_URL),
+        "voice_engine": "XTTS-v2 voice cloning via Hugging Face" if VOICE_API_URL else "Voice cloning service not connected",
     }
 
 
@@ -79,8 +79,8 @@ class SpeechRequest(BaseModel):
 
 @app.get("/voice/status")
 async def voice_status():
-    if not VOICE_API_URL or not VOICE_API_KEY:
-        return {"configured": False, "ready": False, "engine": "Coqui XTTS-v2", "detail": "Set JARVIS_VOICE_API_URL and JARVIS_VOICE_API_KEY in Render."}
+    if not VOICE_API_URL:
+        return {"configured": False, "ready": False, "engine": "XTTS-v2", "detail": "Set JARVIS_VOICE_API_URL in Render."}
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.get(VOICE_API_URL)
@@ -88,14 +88,14 @@ async def voice_status():
         return {
             "configured": True,
             "ready": True,
-            "engine": "Coqui XTTS-v2 on Hugging Face ZeroGPU",
-            "detail": "The Gradio voice Space is reachable. GPU/model readiness is confirmed when speech generation runs.",
+            "engine": "XTTS-v2 on public Hugging Face Space",
+            "detail": "The public Gradio voice Space is reachable. Speech generation confirms inference readiness.",
         }
     except Exception:
         return {
             "configured": True,
             "ready": False,
-            "engine": "Coqui XTTS-v2 on Hugging Face ZeroGPU",
+            "engine": "XTTS-v2 on public Hugging Face Space",
             "detail": "The voice Space is starting, sleeping, building, or unreachable.",
         }
 
@@ -103,20 +103,33 @@ async def voice_status():
 @app.post("/speak")
 async def speak(req: SpeechRequest):
     """Proxy speech to the dedicated XTTS-v2 ZeroGPU Space. No preset-voice fallback."""
-    if not VOICE_API_URL or not VOICE_API_KEY:
-        raise HTTPException(status_code=503, detail="JARVIS voice cloning is not connected yet. Configure the XTTS voice Space in Render.")
+    if not VOICE_API_URL:
+        raise HTTPException(status_code=503, detail="JARVIS voice service URL is not configured.")
     text = " ".join(req.text.split())
     if not text:
         raise HTTPException(status_code=400, detail="Speech text is empty.")
+    sample_url = "https://raw.githubusercontent.com/thenotoriouscassim-svg/cassimtv3/main/assets/audio/jarvis_boot.mp3"
+    sample_path = None
     try:
         from gradio_client import Client
 
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as http:
+            sample_response = await http.get(sample_url)
+            sample_response.raise_for_status()
+        if len(sample_response.content) < 1000:
+            raise RuntimeError("The JARVIS reference recording could not be downloaded.")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as sample_file:
+            sample_file.write(sample_response.content)
+            sample_path = sample_file.name
+
         def generate():
             client = Client(VOICE_API_URL, verbose=False)
-            return client.predict(text[:2500], VOICE_API_KEY, api_name="/generate")
+            return client.predict(text[:2500], sample_path, api_name="/predict")
 
         result = await asyncio.wait_for(asyncio.to_thread(generate), timeout=240)
         audio_path = result.get("path") if isinstance(result, dict) else result
+        if isinstance(audio_path, (list, tuple)):
+            audio_path = audio_path[0] if audio_path else None
         if not audio_path or not isinstance(audio_path, str) or not os.path.isfile(audio_path):
             raise HTTPException(status_code=502, detail="The voice Space returned no usable audio file.")
         with open(audio_path, "rb") as audio_file:
@@ -129,10 +142,17 @@ async def speak(req: SpeechRequest):
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Voice generation timed out. Try a shorter response.")
     except Exception as exc:
+        print(f"JARVIS voice generation error: {type(exc).__name__}: {exc}")
         message = str(exc).lower()
         if "quota" in message or "zerogpu" in message or "gpu" in message:
-            raise HTTPException(status_code=503, detail="Hugging Face ZeroGPU is busy or its free daily quota is exhausted. Try again later.")
-        raise HTTPException(status_code=502, detail="JARVIS could not generate speech through the voice Space.")
+            raise HTTPException(status_code=503, detail="The public voice Space is busy or its free GPU quota is exhausted. Try again later.")
+        raise HTTPException(status_code=502, detail="JARVIS could not generate speech through the public XTTS voice Space.")
+    finally:
+        if sample_path:
+            try:
+                os.remove(sample_path)
+            except OSError:
+                pass
  
 @app.post("/chat")
 async def chat(req: ChatRequest):
