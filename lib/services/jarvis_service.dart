@@ -67,7 +67,7 @@ class JarvisService extends ChangeNotifier {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'text': text}),
           )
-          .timeout(const Duration(seconds: 90));
+          .timeout(const Duration(seconds: 240));
       if (response.statusCode != 200 || !_autoSpeak) return;
       await _voicePlayer.stop();
       await _voicePlayer.play(BytesSource(response.bodyBytes));
