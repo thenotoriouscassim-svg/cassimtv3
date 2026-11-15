@@ -1,10 +1,38 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/jarvis_service.dart';
+import '../services/memory_service.dart';
 import '../utils/constants.dart';
 
 class StatusBarWidget extends StatelessWidget {
   const StatusBarWidget({super.key});
+
+  void _showChats(BuildContext context, JarvisService jarvis) {
+    showModalBottomSheet(context: context, backgroundColor: JarvisColors.surface, isScrollControlled: true, builder: (sheetContext) => SafeArea(
+      child: SizedBox(height: MediaQuery.of(sheetContext).size.height * .72, child: Column(children: [
+        Padding(padding: const EdgeInsets.all(16), child: Row(children: [const Expanded(child: Text('YOUR CHATS', style: TextStyle(color: JarvisColors.cyan, fontFamily: 'Orbitron', letterSpacing: 2))), IconButton(onPressed: () async { await jarvis.createNewChat(); if (sheetContext.mounted) Navigator.pop(sheetContext); }, icon: const Icon(Icons.add, color: JarvisColors.cyan), tooltip: 'New chat')])),
+        const Divider(height: 1),
+        Expanded(child: ListView(children: jarvis.savedChats.map((chat) => ListTile(leading: const Icon(Icons.chat_bubble_outline, color: JarvisColors.cyan), title: Text(chat['title']?.toString() ?? 'Chat', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: JarvisColors.textPrimary)), selected: chat['id'] == jarvis.activeChatId, onTap: () async { await jarvis.openChat(chat['id'].toString()); if (sheetContext.mounted) Navigator.pop(sheetContext); }, trailing: IconButton(icon: const Icon(Icons.delete_outline, color: JarvisColors.textDim), onPressed: () => jarvis.deleteChat(chat['id'].toString())))).toList())),
+      ])),
+    ));
+  }
+
+  void _showMemory(BuildContext context) {
+    final memory = context.read<MemoryService>();
+    final keyController = TextEditingController();
+    final valueController = TextEditingController();
+    showDialog(context: context, builder: (dialogContext) => AlertDialog(
+      backgroundColor: JarvisColors.surface,
+      title: const Text('JARVIS MEMORY', style: TextStyle(color: JarvisColors.cyan, fontFamily: 'Orbitron', fontSize: 15)),
+      content: SizedBox(width: double.maxFinite, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        TextField(controller: keyController, style: const TextStyle(color: JarvisColors.textPrimary), decoration: const InputDecoration(labelText: 'What should JARVIS remember?', labelStyle: TextStyle(color: JarvisColors.textSecondary))),
+        TextField(controller: valueController, style: const TextStyle(color: JarvisColors.textPrimary), decoration: const InputDecoration(labelText: 'Details', labelStyle: TextStyle(color: JarvisColors.textSecondary))),
+        const SizedBox(height: 12),
+        ListenableBuilder(listenable: memory, builder: (_, __) => Column(children: memory.longTermMemory.asMap().entries.map((entry) => ListTile(dense: true, title: Text(entry.value['key'] ?? '', style: const TextStyle(color: JarvisColors.textPrimary)), subtitle: Text(entry.value['value'] ?? '', style: const TextStyle(color: JarvisColors.textSecondary)), trailing: IconButton(icon: const Icon(Icons.close, color: JarvisColors.textDim), onPressed: () => memory.deleteMemory(entry.key)))).toList())),
+      ]))),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('CLOSE')), TextButton(onPressed: () async { if (keyController.text.trim().isNotEmpty && valueController.text.trim().isNotEmpty) await memory.saveMemory(keyController.text.trim(), valueController.text.trim()); if (dialogContext.mounted) Navigator.pop(dialogContext); }, child: const Text('SAVE MEMORY'))],
+    )).then((_) { keyController.dispose(); valueController.dispose(); });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,6 +66,8 @@ class StatusBarWidget extends StatelessWidget {
           ),
 
           const Spacer(),
+          IconButton(tooltip: 'Chat history', onPressed: () => _showChats(context, jarvis), icon: const Icon(Icons.history, color: JarvisColors.cyan, size: 20)),
+          IconButton(tooltip: 'JARVIS memory', onPressed: () => _showMemory(context), icon: const Icon(Icons.psychology_alt_outlined, color: JarvisColors.cyan, size: 20)),
 
           // Connection indicator
           Container(
