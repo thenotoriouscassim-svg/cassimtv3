@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -21,6 +22,9 @@ class JarvisService extends ChangeNotifier {
   String _currentTranscript = '';
   double _audioLevel = 0.0;
   String _backendUrl = JarvisStrings.backendUrl;
+  final FlutterTts _tts = FlutterTts();
+  bool _autoSpeak = true;
+  bool _ttsReady = false;
 
   JarvisState get state => _state;
   List<Message> get conversation => List.unmodifiable(_conversation);
@@ -38,18 +42,56 @@ class JarvisService extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       final savedUrl = prefs.getString('backend_url');
+      _autoSpeak = prefs.getBool('auto_speak') ?? true;
       if (savedUrl != null && savedUrl.trim().isNotEmpty) {
         _backendUrl = _normalizeUrl(savedUrl);
       }
     } catch (_) {
       // Use the cloud URL default if preferences are unavailable.
     }
+    await _initializeVoice();
     await _connectToBackend();
     _startStatsPolling();
   }
 
   String _normalizeUrl(String value) =>
       value.trim().replaceAll(RegExp(r'/+$'), '');
+
+
+  Future<void> _initializeVoice() async {
+    try {
+      await _tts.setLanguage('en-US');
+      await _tts.setSpeechRate(0.48);
+      await _tts.setPitch(0.92);
+      await _tts.setVolume(1.0);
+      await _tts.awaitSpeakCompletion(true);
+      _ttsReady = true;
+    } catch (_) {
+      _ttsReady = false;
+    }
+  }
+
+  Future<void> _speakResponse(String text) async {
+    if (!_autoSpeak || !_ttsReady || text.trim().isEmpty) return;
+    try {
+      await _tts.stop();
+      await _tts.speak(text);
+    } catch (_) {
+      // Keep the text response available if the device TTS engine fails.
+    }
+  }
+
+  Future<void> setAutoSpeak(bool enabled) async {
+    _autoSpeak = enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('auto_speak', enabled);
+    if (!enabled) {
+      try { await _tts.stop(); } catch (_) {}
+    }
+    notifyListeners();
+  }
+
+  bool get autoSpeak => _autoSpeak;
 
   Future<void> _connectToBackend() async {
     try {
@@ -162,13 +204,14 @@ class JarvisService extends ChangeNotifier {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final answer = data['response']?.toString() ?? 'No response received, sir.';
         _addMessage(Message(
           role: MessageRole.assistant,
-          content: data['response']?.toString() ?? 'No response received, sir.',
+          content: answer,
           timestamp: DateTime.now(),
         ));
         _setState(JarvisState.speaking);
-        await Future.delayed(const Duration(seconds: 2));
+        await _speakResponse(answer);
         _setState(JarvisState.standby);
       } else {
         String detail = 'Cloud service returned HTTP ${response.statusCode}.';
@@ -284,6 +327,7 @@ class JarvisService extends ChangeNotifier {
   void dispose() {
     _statsTimer?.cancel();
     _wsChannel?.sink.close();
+    _tts.stop();
     super.dispose();
   }
 }
