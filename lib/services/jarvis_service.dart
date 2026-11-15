@@ -2,7 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_tts/flutter_tts.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:archive/archive.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:piper_phonemize/piper_phonemize.dart' as piper;
+import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,7 +28,8 @@ class JarvisService extends ChangeNotifier {
   String _currentTranscript = '';
   double _audioLevel = 0.0;
   String _backendUrl = JarvisStrings.backendUrl;
-  final FlutterTts _localTts = FlutterTts();
+  final AudioPlayer _voicePlayer = AudioPlayer();
+  sherpa.OfflineTts? _neuralTts;
   bool _localTtsReady = false;
   int _retryTicks = 0;
   bool _autoSpeak = true;
@@ -64,56 +69,122 @@ class JarvisService extends ChangeNotifier {
 
 
   Future<void> _initializeLocalVoice() async {
+    if (_localTtsReady && _neuralTts != null) return;
     try {
-      await _localTts.awaitSpeakCompletion(true);
-      await _localTts.setLanguage('en-GB');
-      await _localTts.setSpeechRate(0.43);
-      await _localTts.setPitch(0.78);
-      await _localTts.setVolume(1.0);
+      const modelName = 'vits-piper-en_GB-southern_english_male-medium-int8';
+      const modelUrl = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$modelName.tar.bz2';
 
-      // Prefer an installed offline British voice. No cloud TTS is called.
-      final voices = await _localTts.getVoices;
-      final britishOffline = voices.where((dynamic voice) {
-        if (voice is! Map) return false;
-        final locale = (voice['locale'] ?? '').toString().toLowerCase().replaceAll('-', '_');
-        final networkRequired = voice['network_required'] == true;
-        return locale.startsWith('en_gb') && !networkRequired;
-      }).toList();
+      final supportDir = await getApplicationSupportDirectory();
+      final modelDir = Directory('${supportDir.path}/$modelName');
+      final modelFile = File('${modelDir.path}/model.onnx');
+      final tokensFile = File('${modelDir.path}/tokens.txt');
 
-      if (britishOffline.isNotEmpty) {
-        final preferred = britishOffline.firstWhere(
-          (dynamic voice) {
-            final name = (voice['name'] ?? '').toString().toLowerCase();
-            return name.contains('male') || name.contains('rjs') || name.contains('daniel');
-          },
-          orElse: () => britishOffline.first,
-        );
-        await _localTts.setVoice({
-          'name': preferred['name'].toString(),
-          'locale': preferred['locale'].toString(),
-        });
+      if (!await modelFile.exists() || !await tokensFile.exists()) {
+        final response = await http.get(Uri.parse(modelUrl))
+            .timeout(const Duration(minutes: 5));
+        if (response.statusCode != 200) {
+          throw Exception('Could not download the free British voice model (HTTP ${response.statusCode}).');
+        }
+        final tarBytes = BZip2Decoder().decodeBytes(response.bodyBytes);
+        final files = TarDecoder().decodeBytes(tarBytes);
+        await modelDir.create(recursive: true);
+        String? discoveredModel;
+        String? discoveredTokens;
+        for (final entry in files.files) {
+          if (!entry.isFile) continue;
+          final name = entry.name.split('/').last;
+          if (name.endsWith('.onnx') && discoveredModel == null) {
+            final out = File('${modelDir.path}/model.onnx');
+            await out.writeAsBytes(entry.content as List<int>, flush: true);
+            discoveredModel = out.path;
+          } else if (name == 'tokens.txt') {
+            final out = File('${modelDir.path}/tokens.txt');
+            await out.writeAsBytes(entry.content as List<int>, flush: true);
+            discoveredTokens = out.path;
+          }
+        }
+        if (discoveredModel == null || discoveredTokens == null) {
+          throw Exception('The downloaded voice model is incomplete.');
+        }
       }
+
+      await piper.initBindingsAsync();
+      final espeakData = await piper.extractEspeakNgData();
+      if (piper.PiperPhonemize.initialize(espeakData) < 0) {
+        throw Exception('Could not initialize the offline British phonemizer.');
+      }
+      await sherpa.initBindingsAsync();
+
+      final modelConfig = sherpa.OfflineTtsModelConfig(
+        vits: sherpa.OfflineTtsVitsModelConfig(
+          model: modelFile.path,
+          tokens: tokensFile.path,
+        ),
+        numThreads: 2,
+        debug: false,
+      );
+      _neuralTts = sherpa.OfflineTts(
+        sherpa.OfflineTtsConfig(model: modelConfig, maxNumSentences: 1),
+      );
       _localTtsReady = true;
+      _voiceConfigured = true;
+      notifyListeners();
     } catch (error) {
       _localTtsReady = false;
-      debugPrint('Local JARVIS TTS initialization failed: $error');
+      _voiceConfigured = false;
+      debugPrint('Offline neural JARVIS voice initialization failed: $error');
     }
   }
 
   Future<void> _speakResponse(String text) async {
     if (!_autoSpeak || text.trim().isEmpty) return;
     try {
-      if (!_localTtsReady) await _initializeLocalVoice();
-      if (!_localTtsReady) {
-        throw Exception('No usable local text-to-speech voice is installed. Install an English (United Kingdom) voice in Android Text-to-speech settings.');
+      if (!_localTtsReady || _neuralTts == null) {
+        await _initializeLocalVoice();
       }
-      if (!_autoSpeak) return;
-      await _localTts.stop();
-      await _localTts.speak(text);
+      final engine = _neuralTts;
+      if (!_localTtsReady || engine == null) {
+        throw Exception('The offline neural voice is not ready. Check your connection once to download the voice model.');
+      }
+
+      final phonemes = piper.PiperPhonemize.phonemize(text, voice: 'en-gb')
+          .where((sentence) => sentence.isNotEmpty)
+          .toList();
+      if (phonemes.isEmpty) return;
+
+      final audio = engine.generateWithConfig(
+        text: '',
+        config: sherpa.OfflineTtsGenerationConfig(
+          sid: 0,
+          speed: 0.96,
+          silenceScale: 0.22,
+          phonemeCodepoints: phonemes,
+        ),
+      );
+      if (audio.samples.isEmpty) {
+        throw Exception('The neural voice returned no audio.');
+      }
+
+      final tempDir = await getTemporaryDirectory();
+      final wavFile = File('${tempDir.path}/jarvis_voice_${DateTime.now().microsecondsSinceEpoch}.wav');
+      final written = sherpa.writeWave(
+        filename: wavFile.path,
+        samples: audio.samples,
+        sampleRate: audio.sampleRate,
+      );
+      if (!written) throw Exception('Could not create the speech audio file.');
+
+      await _voicePlayer.stop();
+      final completed = _voicePlayer.onPlayerComplete.first;
+      await _voicePlayer.play(DeviceFileSource(wavFile.path));
+      await completed.timeout(
+        Duration(seconds: (audio.samples.length / audio.sampleRate).ceil() + 15),
+      );
+      if (await wavFile.exists()) await wavFile.delete();
     } catch (error) {
       _addMessage(Message(
         role: MessageRole.assistant,
-        content: 'I could not speak locally: ${error.toString().replaceFirst('Exception: ', '')}',
+        content: 'I could not speak with the offline neural voice: ${error.toString().replaceFirst('Exception: ', '')}',
         timestamp: DateTime.now(),
         isError: true,
       ));
@@ -212,7 +283,7 @@ class JarvisService extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('auto_speak', enabled);
     if (!enabled) {
-      try { await _localTts.stop(); } catch (_) {}
+      try { await _voicePlayer.stop(); } catch (_) {}
     }
     notifyListeners();
   }
@@ -460,7 +531,9 @@ class JarvisService extends ChangeNotifier {
   void dispose() {
     _statsTimer?.cancel();
     _wsChannel?.sink.close();
-    _localTts.stop();
+    _voicePlayer.stop();
+    _voicePlayer.dispose();
+    _neuralTts?.free();
     super.dispose();
   }
 }
