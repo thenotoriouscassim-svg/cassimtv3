@@ -156,6 +156,72 @@ class _MessageBubbleState extends State<_MessageBubble> {
     return TextSpan(style: baseStyle, children: spans);
   }
 
+  Widget _messageBody(String content, TextStyle style) {
+    final pattern = RegExp(r'```([a-zA-Z0-9_+-]*)\\s*\\n([\\s\\S]*?)```');
+    final matches = pattern.allMatches(content).toList();
+    if (matches.isEmpty) {
+      return SelectableText.rich(_buildMessageSpan(content, style));
+    }
+    final children = <Widget>[];
+    var cursor = 0;
+    for (final match in matches) {
+      if (match.start > cursor) {
+        children.add(SelectableText.rich(_buildMessageSpan(content.substring(cursor, match.start), style)));
+      }
+      final language = (match.group(1) ?? '').trim();
+      final code = (match.group(2) ?? '').trimRight();
+      children.add(Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(top: 8, bottom: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFF02060D),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: JarvisColors.cyan.withOpacity(.28)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: const BoxDecoration(
+                color: JarvisColors.surface,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+              ),
+              child: Row(children: [
+                Expanded(child: Text(language.isEmpty ? 'CODE' : language.toUpperCase(),
+                  style: const TextStyle(color: JarvisColors.cyan, fontSize: 10, letterSpacing: 1.4, fontFamily: 'Orbitron'))),
+                IconButton(
+                  tooltip: 'Copy code',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.copy, color: JarvisColors.textSecondary, size: 16),
+                  onPressed: () async {
+                    await Clipboard.setData(ClipboardData(text: code));
+                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Code copied'), duration: Duration(seconds: 1)));
+                  },
+                ),
+              ]),
+            ),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.all(12),
+              child: SelectableText(code, style: const TextStyle(
+                color: Color(0xFFB8E9D2), fontSize: 12, height: 1.5,
+                fontFamily: 'monospace')),
+            ),
+          ],
+        ),
+      ));
+      cursor = match.end;
+    }
+    if (cursor < content.length) {
+      children.add(SelectableText.rich(_buildMessageSpan(content.substring(cursor), style)));
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
+  }
+
   @override
   Widget build(BuildContext context) {
     final message = widget.message;
@@ -207,16 +273,14 @@ class _MessageBubbleState extends State<_MessageBubble> {
                         ? [BoxShadow(color: JarvisColors.cyan.withOpacity(0.05), blurRadius: 8)]
                         : null,
                   ),
-                  child: SelectableText.rich(
-                    _buildMessageSpan(
-                      message.content,
-                      TextStyle(
-                        color: message.isError ? JarvisColors.red : JarvisColors.textPrimary,
-                        fontSize: 13,
-                        height: 1.6,
-                        fontFamily: 'Orbitron',
-                        fontWeight: FontWeight.normal,
-                      ),
+                  child: _messageBody(
+                    message.content,
+                    TextStyle(
+                      color: message.isError ? JarvisColors.red : JarvisColors.textPrimary,
+                      fontSize: 13,
+                      height: 1.6,
+                      fontFamily: 'Orbitron',
+                      fontWeight: FontWeight.normal,
                     ),
                   ),
                 ),
