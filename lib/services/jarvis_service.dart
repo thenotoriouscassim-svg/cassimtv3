@@ -116,7 +116,6 @@ class JarvisService extends ChangeNotifier {
 
       // Extract the bundled eSpeak data and pass its REAL filesystem path
       // to the native phonemizer. The package demo does this explicitly.
-      final supportDir = await getApplicationSupportDirectory();
       final espeakDataDir = Directory('${supportDir.path}/espeak-ng-data');
       final requiredEspeakFiles = [
         'phontab',
