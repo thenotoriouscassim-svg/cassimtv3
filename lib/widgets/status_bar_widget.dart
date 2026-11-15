@@ -72,37 +72,6 @@ class StatusBarWidget extends StatelessWidget {
 
           const SizedBox(width: 10),
 
-          // Large, accessible mute toggle hit target.
-          Tooltip(
-            message: jarvis.autoSpeak ? 'Mute JARVIS voice' : 'Unmute JARVIS voice',
-            child: Material(
-              color: jarvis.autoSpeak
-                  ? JarvisColors.cyan.withOpacity(0.10)
-                  : JarvisColors.red.withOpacity(0.12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: BorderSide(
-                  color: jarvis.autoSpeak ? JarvisColors.cyanDim : JarvisColors.red,
-                ),
-              ),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: () => jarvis.setAutoSpeak(!jarvis.autoSpeak),
-                child: SizedBox(
-                  width: 52,
-                  height: 48,
-                  child: Icon(
-                    jarvis.autoSpeak ? Icons.volume_up : Icons.volume_off,
-                    color: jarvis.autoSpeak ? JarvisColors.cyan : JarvisColors.red,
-                    size: 22,
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          const SizedBox(width: 10),
-
           // Retry connection
           if (!jarvis.isConnected)
             GestureDetector(
