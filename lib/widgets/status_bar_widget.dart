@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/jarvis_service.dart';
-import '../services/audio_service.dart';
 import '../utils/constants.dart';
 
 class StatusBarWidget extends StatelessWidget {
@@ -10,7 +9,6 @@ class StatusBarWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final jarvis = context.watch<JarvisService>();
-    final audio  = context.watch<AudioService>();
 
     return Container(
       height: 40,
