@@ -16,6 +16,8 @@ from pydantic import BaseModel, Field
 APP_STARTED = time.time()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+VOICE_API_URL = os.getenv("JARVIS_VOICE_API_URL", "").strip().rstrip("/")
+VOICE_API_KEY = os.getenv("JARVIS_VOICE_API_KEY", "").strip()
 
 JARVIS_SYSTEM_PROMPT = """You are JARVIS, a personal AI assistant created for and by CassimTV.
 
@@ -38,7 +40,7 @@ RESPONSE STYLE:
 
 You are JARVIS AI by CassimTV. Never claim access to the user's device, files, sensors, or accounts unless a connected capability actually provides it."""
 
-app = FastAPI(title="JARVIS AI by CassimTV", version="1.1.0-cloud")
+app = FastAPI(title="JARVIS AI by CassimTV", version="1.2.0-cloud")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -65,8 +67,8 @@ async def health():
         "brand": "CassimTV",
         "ai_configured": bool(GEMINI_API_KEY),
         "model": GEMINI_MODEL if GEMINI_API_KEY else None,
-        "voice_configured": True,
-        "voice_engine": "Edge Neural TTS (temporary voice; voice cloning not configured)",
+        "voice_configured": bool(VOICE_API_URL and VOICE_API_KEY),
+        "voice_engine": "Coqui XTTS-v2 voice clone" if VOICE_API_URL and VOICE_API_KEY else "Voice cloning service not connected",
     }
 
 
@@ -74,42 +76,49 @@ class SpeechRequest(BaseModel):
     text: str = Field(min_length=1, max_length=5000)
 
 
+@app.get("/voice/status")
+async def voice_status():
+    if not VOICE_API_URL or not VOICE_API_KEY:
+        return {"configured": False, "ready": False, "engine": "Coqui XTTS-v2", "detail": "Set JARVIS_VOICE_API_URL and JARVIS_VOICE_API_KEY in Render."}
+    try:
+        async with httpx.AsyncClient(timeout=12) as client:
+            response = await client.get(f"{VOICE_API_URL}/health")
+        response.raise_for_status()
+        data = response.json()
+        return {"configured": True, "ready": data.get("status") == "ok", "engine": data.get("engine", "Coqui XTTS-v2"), "model_loaded": data.get("model_loaded", False), "samples_ready": data.get("samples_ready", False)}
+    except Exception:
+        return {"configured": True, "ready": False, "engine": "Coqui XTTS-v2", "detail": "The voice service is not reachable yet."}
+
+
 @app.post("/speak")
 async def speak(req: SpeechRequest):
-    """Generate speech with a lightweight neural voice service.
-
-    This is a temporary speaking voice, not a clone of the supplied recordings.
-    XTTS-v2 cloning needs a larger server than the current Render free instance.
-    """
-    import tempfile
-    import edge_tts
-
+    """Proxy speech to the dedicated XTTS-v2 clone. No preset-voice fallback."""
+    if not VOICE_API_URL or not VOICE_API_KEY:
+        raise HTTPException(status_code=503, detail="JARVIS voice cloning is not connected yet. Configure the XTTS voice service in Render.")
     text = " ".join(req.text.split())
     if not text:
         raise HTTPException(status_code=400, detail="Speech text is empty.")
-
-    voice = os.getenv("JARVIS_TTS_VOICE", "en-GB-RyanNeural").strip()
-    temp_path = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp:
-            temp_path = temp.name
-        communicate = edge_tts.Communicate(text, voice)
-        await communicate.save(temp_path)
-        with open(temp_path, "rb") as audio_file:
-            audio = audio_file.read()
-        if not audio:
-            raise HTTPException(status_code=502, detail="The speech service returned empty audio.")
-        return Response(content=audio, media_type="audio/mpeg")
+        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client:
+            upstream = await client.post(
+                f"{VOICE_API_URL}/speak",
+                json={"text": text},
+                headers={"Authorization": f"Bearer {VOICE_API_KEY}"},
+            )
+        if upstream.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"The XTTS voice service returned HTTP {upstream.status_code}.")
+        if not upstream.content:
+            raise HTTPException(status_code=502, detail="The XTTS voice service returned empty audio.")
+        media_type = upstream.headers.get("content-type", "audio/wav").split(";")[0]
+        if not media_type.startswith("audio/"):
+            raise HTTPException(status_code=502, detail="The XTTS voice service did not return audio.")
+        return Response(content=upstream.content, media_type=media_type)
     except HTTPException:
         raise
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Speech generation failed: {str(exc)[:300]}")
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Voice generation timed out. Try a shorter response.")
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="JARVIS could not reach the XTTS voice service.")
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
