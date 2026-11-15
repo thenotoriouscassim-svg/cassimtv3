@@ -75,4 +75,4 @@ jobs:
           print("Space files uploaded:", repo_id)
           PY
       - name: Confirm deployment target
-        run: echo "ZeroGPU Space deployment submitted. Check the Space build logs before connecting Render."
+        run: echo "ZeroGPU Gradio Space deployment submitted. Verify Space runtime and API before connecting Render."
