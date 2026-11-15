@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/gestures.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:provider/provider.dart';
 import '../services/jarvis_service.dart';
 import '../models/message.dart';
@@ -104,12 +106,59 @@ class _ConversationPanelState extends State<ConversationPanel> {
   }
 }
 
-class _MessageBubble extends StatelessWidget {
+class _MessageBubble extends StatefulWidget {
   final Message message;
   const _MessageBubble({required this.message});
 
   @override
+  State<_MessageBubble> createState() => _MessageBubbleState();
+}
+
+class _MessageBubbleState extends State<_MessageBubble> {
+  final List<TapGestureRecognizer> _linkRecognizers = [];
+
+  @override
+  void dispose() {
+    for (final recognizer in _linkRecognizers) {
+      recognizer.dispose();
+    }
+    super.dispose();
+  }
+
+  TextSpan _buildMessageSpan(String content, TextStyle baseStyle) {
+    for (final recognizer in _linkRecognizers) {
+      recognizer.dispose();
+    }
+    _linkRecognizers.clear();
+    final urlPattern = RegExp(r'https?://[^\\s]+');
+    final spans = <TextSpan>[];
+    var lastIndex = 0;
+    for (final match in urlPattern.allMatches(content)) {
+      if (match.start > lastIndex) {
+        spans.add(TextSpan(text: content.substring(lastIndex, match.start)));
+      }
+      final url = match.group(0)!;
+      final recognizer = TapGestureRecognizer()
+        ..onTap = () {
+          launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+        };
+      _linkRecognizers.add(recognizer);
+      spans.add(TextSpan(
+        text: url,
+        style: const TextStyle(color: JarvisColors.cyan, decoration: TextDecoration.underline),
+        recognizer: recognizer,
+      ));
+      lastIndex = match.end;
+    }
+    if (lastIndex < content.length) {
+      spans.add(TextSpan(text: content.substring(lastIndex)));
+    }
+    return TextSpan(style: baseStyle, children: spans);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final message = widget.message;
     final isUser = message.role == MessageRole.user;
     final isAssistant = message.role == MessageRole.assistant;
 
@@ -158,14 +207,16 @@ class _MessageBubble extends StatelessWidget {
                         ? [BoxShadow(color: JarvisColors.cyan.withOpacity(0.05), blurRadius: 8)]
                         : null,
                   ),
-                  child: SelectableText(
-                    message.content,
-                    style: TextStyle(
-                      color: message.isError ? JarvisColors.red : JarvisColors.textPrimary,
-                      fontSize: 13,
-                      height: 1.6,
-                      fontFamily: 'Orbitron',
-                      fontWeight: FontWeight.normal,
+                  child: SelectableText.rich(
+                    _buildMessageSpan(
+                      message.content,
+                      TextStyle(
+                        color: message.isError ? JarvisColors.red : JarvisColors.textPrimary,
+                        fontSize: 13,
+                        height: 1.6,
+                        fontFamily: 'Orbitron',
+                        fontWeight: FontWeight.normal,
+                      ),
                     ),
                   ),
                 ),
