@@ -13,16 +13,32 @@ on:
 
 jobs:
   deploy:
-    if: ${{ secrets.HF_TOKEN != '' && secrets.HF_SPACE_REPO_ID != '' && secrets.JARVIS_VOICE_API_KEY != '' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Check deployment secrets
+        id: secrets
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_REPO_ID: ${{ secrets.HF_SPACE_REPO_ID }}
+          JARVIS_VOICE_API_KEY: ${{ secrets.JARVIS_VOICE_API_KEY }}
+        run: |
+          if [ -z "$HF_TOKEN" ] || [ -z "$HF_SPACE_REPO_ID" ] || [ -z "$JARVIS_VOICE_API_KEY" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Add HF_TOKEN, HF_SPACE_REPO_ID and JARVIS_VOICE_API_KEY repository secrets to deploy the voice service."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
+        if: steps.secrets.outputs.ready == 'true'
       - uses: actions/setup-python@v5
+        if: steps.secrets.outputs.ready == 'true'
         with:
           python-version: "3.11"
       - name: Install Hugging Face Hub
+        if: steps.secrets.outputs.ready == 'true'
         run: pip install --upgrade huggingface_hub
       - name: Prepare Space files
+        if: steps.secrets.outputs.ready == 'true'
         run: |
           mkdir -p hf-space/samples
           cp voice_service/app.py hf-space/app.py
@@ -33,6 +49,7 @@ jobs:
           cp assets/audio/jarvis_request_root.mp3 hf-space/samples/
           cp assets/audio/jarvis_app_closed.mp3 hf-space/samples/
       - name: Create Space, set API secret and deploy
+        if: steps.secrets.outputs.ready == 'true'
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_REPO_ID: ${{ secrets.HF_SPACE_REPO_ID }}
@@ -53,3 +70,6 @@ jobs:
           )
           print("JARVIS voice service URL: https://" + repo_id.replace("/", "-") + ".hf.space")
           PY
+      - name: Explain skipped deployment
+        if: steps.secrets.outputs.ready != 'true'
+        run: echo "Voice service deployment skipped. Configure the three repository secrets and run this workflow again."
