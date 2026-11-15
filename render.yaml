@@ -13,3 +13,9 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.8-flash
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: VOICE_SETUP_TOKEN
+        sync: false
+      - key: ELEVENLABS_VOICE_ID
+        sync: false
