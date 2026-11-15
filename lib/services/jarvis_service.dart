@@ -60,8 +60,8 @@ class JarvisService extends ChangeNotifier {
     } catch (_) {
       // Use the cloud URL default if preferences are unavailable.
     }
-    await _initializeLocalVoice();
     await _connectToBackend();
+    await _checkVoiceService();
     _startStatsPolling();
   }
 
@@ -191,60 +191,74 @@ class JarvisService extends ChangeNotifier {
     }
   }
 
+  Future<void> _checkVoiceService() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$_backendUrl/voice/status'))
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode == 200) {
+        final status = jsonDecode(response.body) as Map<String, dynamic>;
+        _voiceConfigured = status['ready'] == true;
+      } else {
+        _voiceConfigured = false;
+      }
+    } catch (_) {
+      _voiceConfigured = false;
+    }
+    notifyListeners();
+  }
+
   Future<void> _speakResponse(String text) async {
     if (!_autoSpeak || text.trim().isEmpty) return;
+    File? wavFile;
     try {
-      if (!_localTtsReady || _neuralTts == null) {
-        await _initializeLocalVoice();
-      }
-      final engine = _neuralTts;
-      if (!_localTtsReady || engine == null) {
-        throw Exception(_voiceInitError == null
-            ? 'Piper initialization did not complete. Please retry.'
-            : 'Piper setup failed: $_voiceInitError');
-      }
+      final response = await http
+          .post(
+            Uri.parse('$_backendUrl/speak'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'text': text}),
+          )
+          .timeout(const Duration(minutes: 3));
 
-      final phonemes = piper.PiperPhonemize.phonemize(text, voice: 'en')
-          .where((sentence) => sentence.isNotEmpty)
-          .toList();
-      if (phonemes.isEmpty) return;
-
-      final audio = engine.generateWithConfig(
-        text: '',
-        config: sherpa.OfflineTtsGenerationConfig(
-          sid: 0,
-          speed: 0.96,
-          silenceScale: 0.22,
-          phonemeCodepoints: phonemes,
-        ),
-      );
-      if (audio.samples.isEmpty) {
-        throw Exception('The neural voice returned no audio.');
+      if (response.statusCode != 200) {
+        String detail = 'HTTP ${response.statusCode}';
+        try {
+          final body = jsonDecode(response.body);
+          if (body is Map && body['detail'] is String) {
+            detail = body['detail'] as String;
+          }
+        } catch (_) {}
+        throw Exception(detail);
+      }
+      if (response.bodyBytes.length < 1000) {
+        throw Exception('The XTTS voice service returned an empty audio file.');
       }
 
       final tempDir = await getTemporaryDirectory();
-      final wavFile = File('${tempDir.path}/jarvis_voice_${DateTime.now().microsecondsSinceEpoch}.wav');
-      final written = sherpa.writeWave(
-        filename: wavFile.path,
-        samples: audio.samples,
-        sampleRate: audio.sampleRate,
+      wavFile = File(
+        '${tempDir.path}/jarvis_xtts_${DateTime.now().microsecondsSinceEpoch}.wav',
       );
-      if (!written) throw Exception('Could not create the speech audio file.');
+      await wavFile.writeAsBytes(response.bodyBytes, flush: true);
 
       await _voicePlayer.stop();
       final completed = _voicePlayer.onPlayerComplete.first;
       await _voicePlayer.play(DeviceFileSource(wavFile.path));
-      await completed.timeout(
-        Duration(seconds: (audio.samples.length / audio.sampleRate).ceil() + 15),
-      );
-      if (await wavFile.exists()) await wavFile.delete();
+      await completed.timeout(const Duration(minutes: 3));
+      _voiceConfigured = true;
     } catch (error) {
       _addMessage(Message(
         role: MessageRole.assistant,
-        content: 'Piper voice failed: ${error.toString().replaceFirst('Exception: ', '')}',
+        content: 'JARVIS voice failed: ${error.toString().replaceFirst('Exception: ', '')}',
         timestamp: DateTime.now(),
         isError: true,
       ));
+    } finally {
+      if (wavFile != null && await wavFile.exists()) {
+        try {
+          await wavFile.delete();
+        } catch (_) {}
+      }
+      notifyListeners();
     }
   }
 
