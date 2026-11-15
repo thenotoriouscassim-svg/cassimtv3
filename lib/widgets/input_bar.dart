@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
 import '../services/jarvis_service.dart';
 import '../utils/constants.dart';
 
@@ -14,11 +12,7 @@ class InputBar extends StatefulWidget {
 
 class _InputBarState extends State<InputBar> {
   final _controller = TextEditingController();
-  final stt.SpeechToText _speech = stt.SpeechToText();
-  bool _speechReady = false;
   bool _hasText = false;
-  bool _isListening = false;
-  bool _isStartingListening = false;
 
 
   @override
@@ -39,7 +33,6 @@ class _InputBarState extends State<InputBar> {
   void dispose() {
     _controller.removeListener(_handleTextChanged);
     _controller.dispose();
-    _speech.cancel();
     super.dispose();
   }
 
@@ -48,95 +41,6 @@ class _InputBarState extends State<InputBar> {
     if (text.isEmpty) return;
     jarvis.sendTextMessage(text);
     _controller.clear();
-  }
-
-  Future<void> _toggleListening() async {
-    if (_isStartingListening) return;
-    if (_isListening) {
-      await _speech.stop();
-      if (mounted) setState(() => _isListening = false);
-      return;
-    }
-
-    setState(() => _isStartingListening = true);
-    try {
-      final permission = await Permission.microphone.request();
-      if (!mounted) return;
-      if (!permission.isGranted) {
-        _showMessage(
-          permission.isPermanentlyDenied
-              ? 'Microphone permission is blocked. Enable it in Android app settings.'
-              : 'Microphone permission is required for voice input.',
-          action: permission.isPermanentlyDenied ? 'Settings' : null,
-          onAction: permission.isPermanentlyDenied ? () => openAppSettings() : null,
-        );
-        return;
-      }
-
-      if (!_speechReady) {
-        _speechReady = await _speech.initialize(
-          onStatus: (status) {
-            if (!mounted) return;
-            if (status == 'notListening' || status == 'done') {
-              setState(() => _isListening = false);
-            }
-          },
-          onError: (error) {
-            if (!mounted) return;
-            setState(() => _isListening = false);
-            _showMessage('Speech recognition error: ${error.errorMsg}');
-          },
-        );
-      }
-      if (!_speechReady) {
-        throw Exception('No Android speech recognition service is available. Install or enable Google speech services.');
-      }
-
-      setState(() => _isListening = true);
-      await _speech.listen(
-        localeId: 'en-ZA',
-        listenFor: const Duration(seconds: 30),
-        pauseFor: const Duration(seconds: 4),
-        partialResults: true,
-        cancelOnError: true,
-        onResult: (result) {
-          if (!mounted) return;
-          final words = result.recognizedWords.trim();
-          if (words.isNotEmpty) _controller.text = words;
-          if (result.finalResult && words.isNotEmpty) {
-            setState(() => _isListening = false);
-            final jarvis = context.read<JarvisService>();
-            jarvis.sendTextMessage(words);
-            _controller.clear();
-          }
-        },
-      );
-    } catch (error) {
-      if (mounted) {
-        setState(() => _isListening = false);
-        _showMessage('Could not start speech input: ${error.toString().replaceFirst('Exception: ', '')}');
-      }
-    } finally {
-      if (mounted) setState(() => _isStartingListening = false);
-    }
-  }
-
-  void _showMessage(
-    String message, {
-    String? action,
-    VoidCallback? onAction,
-  }) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          action: action != null && onAction != null
-              ? SnackBarAction(label: action, onPressed: onAction)
-              : null,
-        ),
-      );
   }
 
   @override
@@ -151,50 +55,6 @@ class _InputBarState extends State<InputBar> {
       ),
       child: Row(
         children: [
-          // Tap-to-talk uses Android's speech recognizer; no temporary WAV file is needed.
-          GestureDetector(
-            onTap: _isStartingListening ? null : _toggleListening,
-            child: AnimatedContainer(
-              duration: JarvisDurations.fast,
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: _isListening
-                    ? JarvisColors.green.withOpacity(0.15)
-                    : Colors.transparent,
-                border: Border.all(
-                  color: _isListening
-                      ? JarvisColors.green
-                      : JarvisColors.cyanDim,
-                  width: 1.5,
-                ),
-                boxShadow: _isListening
-                    ? [
-                        BoxShadow(
-                          color: JarvisColors.green.withOpacity(0.4),
-                          blurRadius: 12,
-                        )
-                      ]
-                    : null,
-              ),
-              child: _isStartingListening
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      _isListening ? Icons.mic : Icons.mic_none,
-                      color: _isListening
-                          ? JarvisColors.green
-                          : JarvisColors.cyanDim,
-                      size: 20,
-                    ),
-            ),
-          ),
-          const SizedBox(width: 10),
-
           // Text input and recognized speech.
           Expanded(
             child: Container(
@@ -212,11 +72,9 @@ class _InputBarState extends State<InputBar> {
                   fontFamily: 'Orbitron',
                 ),
                 decoration: InputDecoration(
-                  hintText: _isListening
-                      ? 'Recording... tap to send'
-                      : jarvis.isConnected
-                          ? 'Ask JARVIS anything...'
-                          : 'Backend offline — type to queue',
+                  hintText: jarvis.isConnected
+                      ? 'Ask JARVIS anything...'
+                      : 'Backend offline — type to queue',
                   hintStyle: TextStyle(
                     color: JarvisColors.textDim,
                     fontSize: 11,
