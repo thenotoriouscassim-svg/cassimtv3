@@ -25,7 +25,6 @@ class _InputBarState extends State<InputBar> {
   void initState() {
     super.initState();
     _controller.addListener(_handleTextChanged);
-    _initializeRecorder();
   }
 
   void _handleTextChanged() {
