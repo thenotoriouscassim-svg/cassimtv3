@@ -177,7 +177,7 @@ class JarvisService extends ChangeNotifier {
     }
   }
 
-  Future<void> sendTextMessage(String text) async {
+  Future<void> sendTextMessage(String text, {bool speakResponse = false}) async {
     if (text.trim().isEmpty) return;
 
     // Route explicit search commands and natural weather questions to live search.
@@ -232,7 +232,7 @@ class JarvisService extends ChangeNotifier {
           timestamp: DateTime.now(),
         ));
         _setState(JarvisState.standby);
-        await _speakResponse(answer);
+        if (speakResponse) await _speakResponse(answer);
       } else {
         String detail = 'Cloud service returned HTTP ${response.statusCode}.';
         try {
