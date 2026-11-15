@@ -18,7 +18,8 @@ from pydantic import BaseModel, Field
 
 APP_STARTED = time.time()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = "gemini-3.8-flash"  # Pin the working model; ignore stale Render overrides.
+GEMINI_MODEL = "gemini-3.8-flash"  # Primary model; keep fallbacks in descending quality order.
+GEMINI_FALLBACK_MODELS = ("gemini-3.5-flash", "gemini-3.5-flash-lite")
 FISH_API_KEY = os.getenv("FISH_API_KEY", "").strip()
 FISH_AUDIO_VOICE_ID = os.getenv("FISH_AUDIO_VOICE_ID", "").strip()
 FISH_AUDIO_MODEL = os.getenv("FISH_AUDIO_MODEL", "s2.1-pro-free").strip()
@@ -289,43 +290,67 @@ async def chat(req: ChatRequest):
             })
     contents.append({"role": "user", "parts": [{"text": req.message}]})
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     payload = {
         "system_instruction": {"parts": [{"text": JARVIS_SYSTEM_PROMPT}]},
         "contents": contents,
         # Use Gemini Flash maximum supported output budget for long code and detailed answers.
         "generationConfig": {"maxOutputTokens": 65536},
     }
+    models_to_try = (GEMINI_MODEL,) + GEMINI_FALLBACK_MODELS
+    last_provider_error = "The AI provider is temporarily unavailable."
     try:
-        async with httpx.AsyncClient(timeout=240) as client:
-            response = await client.post(
-                url,
-                params={"key": GEMINI_API_KEY},
-                json=payload,
-            )
-        if response.status_code >= 400:
-            try:
-                error_data = response.json().get("error", {})
-                detail = error_data.get("message", "AI provider rejected the request.")
-                print(f"Gemini chat API error: HTTP {response.status_code}; status={error_data.get('status', 'unknown')}; detail={detail[:3000]}")
-            except Exception:
-                detail = "AI provider rejected the request."
-                print(f"Gemini chat API error: HTTP {response.status_code}; body={response.text[:3000]}")
-            raise HTTPException(status_code=502, detail=f"JARVIS AI provider error: {detail}")
-        data = response.json()
-        candidates = data.get("candidates", [])
-        parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
-        answer = "".join(part.get("text", "") for part in parts).strip()
-        if not answer:
-            print(f"Gemini chat returned no text: {json.dumps(data, ensure_ascii=False)[:4000]}")
-            raise HTTPException(status_code=502, detail="The AI provider returned an empty response.")
-        return {"response": answer}
+        async with httpx.AsyncClient(timeout=180) as client:
+            for model_index, model_name in enumerate(models_to_try):
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+                try:
+                    response = await client.post(
+                        url,
+                        params={"key": GEMINI_API_KEY},
+                        json=payload,
+                    )
+                except httpx.TimeoutException:
+                    last_provider_error = f"{model_name} timed out."
+                    print(f"Gemini model {model_name} timed out.")
+                    if model_index < len(models_to_try) - 1:
+                        continue
+                    raise HTTPException(status_code=504, detail="JARVIS's Gemini models timed out. Please try again.")
+
+                if response.status_code >= 400:
+                    try:
+                        error_data = response.json().get("error", {})
+                        detail = error_data.get("message", "AI provider rejected the request.")
+                        error_status = error_data.get("status", "unknown")
+                    except Exception:
+                        detail, error_status = "AI provider rejected the request.", "unknown"
+                    last_provider_error = detail
+                    is_temporary = (
+                        response.status_code in (429, 500, 502, 503, 504)
+                        or error_status in ("RESOURCE_EXHAUSTED", "UNAVAILABLE", "INTERNAL")
+                    )
+                    print(f"Gemini model {model_name} failed: HTTP {response.status_code}; status={error_status}; detail={detail[:1000]}")
+                    if is_temporary and model_index < len(models_to_try) - 1:
+                        print(f"Switching JARVIS to Gemini fallback model {models_to_try[model_index + 1]}.")
+                        continue
+                    raise HTTPException(status_code=502, detail=f"JARVIS AI provider error: {detail}")
+
+                data = response.json()
+                candidates = data.get("candidates", [])
+                parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
+                answer = "".join(part.get("text", "") for part in parts).strip()
+                if answer:
+                    if model_name != GEMINI_MODEL:
+                        print(f"JARVIS response successfully generated using fallback model {model_name}.")
+                    return {"response": answer, "model": model_name}
+                last_provider_error = "The AI provider returned an empty response."
+                print(f"Gemini model {model_name} returned no text: {json.dumps(data, ensure_ascii=False)[:2000]}")
+                if model_index < len(models_to_try) - 1:
+                    continue
+                raise HTTPException(status_code=502, detail=last_provider_error)
+        raise HTTPException(status_code=502, detail=f"JARVIS AI provider error: {last_provider_error}")
     except HTTPException:
         raise
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="JARVIS's AI provider timed out. Please try again.")
     except httpx.HTTPError:
-        raise HTTPException(status_code=502, detail="JARVIS could not reach its AI provider.")
+        raise HTTPException(status_code=502, detail="JARVIS could not reach Gemini.")
 
 class VoiceRequest(BaseModel):
     text: str = Field(min_length=1, max_length=6000)
