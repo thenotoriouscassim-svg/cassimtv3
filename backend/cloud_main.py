@@ -219,7 +219,7 @@ async def live_search(req: SearchRequest):
                 "parts": [{"text": f"Search the live web for this query: {query}. Give a concise, useful answer based on current sources. Clearly distinguish verified facts from uncertainty."}]
             }],
             "tools": [{"google_search": {}}],
-            "generationConfig": {"maxOutputTokens": 1200, "thinkingConfig": {"thinkingLevel": "medium"}},
+            "generationConfig": {"maxOutputTokens": 1200},
         }
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
         try:
@@ -294,7 +294,7 @@ async def chat(req: ChatRequest):
         "system_instruction": {"parts": [{"text": JARVIS_SYSTEM_PROMPT}]},
         "contents": contents,
         # Use Gemini Flash maximum supported output budget for long code and detailed answers.
-        "generationConfig": {"maxOutputTokens": 65536, "thinkingConfig": {"thinkingLevel": "medium"}},
+        "generationConfig": {"maxOutputTokens": 65536},
     }
     try:
         async with httpx.AsyncClient(timeout=240) as client:
