@@ -339,7 +339,7 @@ async def text_to_speech(req: VoiceRequest):
         "reference_id": FISH_AUDIO_VOICE_ID,
         "format": "mp3",
         "latency": "balanced",
-        "prosody": {"speed": 0.85, "volume": -2},
+        "prosody": {"speed": 0.85, "volume": 0},
     }
     try:
         async with httpx.AsyncClient(timeout=90) as client:
