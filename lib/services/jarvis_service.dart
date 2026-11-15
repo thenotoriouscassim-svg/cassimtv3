@@ -113,15 +113,54 @@ class JarvisService extends ChangeNotifier {
       }
 
       await piper.initBindingsAsync();
-      // Flutter requires extracting its bundled espeak-ng-data asset first.
-      // The package's Flutter example then initializes PiperPhonemize with ''.
-      await piper.extractEspeakNgData();
-      final phonemizerStatus = piper.PiperPhonemize.initialize('');
+
+      // Extract the bundled eSpeak data and pass its REAL filesystem path
+      // to the native phonemizer. The package demo does this explicitly.
+      final supportDir = await getApplicationSupportDirectory();
+      final espeakDataDir = Directory('${supportDir.path}/espeak-ng-data');
+      final requiredEspeakFiles = [
+        'phontab',
+        'phondata',
+        'phonindex',
+        'en_dict',
+        'lang/gmw/en',
+      ];
+
+      // The package caches extraction when the directory exists. Remove an
+      // incomplete cache so all bundled assets are extracted again.
+      var espeakDataComplete = await espeakDataDir.exists();
+      if (espeakDataComplete) {
+        for (final relativePath in requiredEspeakFiles) {
+          if (!await File('${espeakDataDir.path}/$relativePath').exists()) {
+            espeakDataComplete = false;
+            break;
+          }
+        }
+      }
+      if (!espeakDataComplete && await espeakDataDir.exists()) {
+        await espeakDataDir.delete(recursive: true);
+      }
+
+      final extractedEspeakPath = await piper.extractEspeakNgData();
+      final extractedEspeakDir = Directory(extractedEspeakPath);
+      if (!await extractedEspeakDir.exists()) {
+        throw Exception('eSpeak data extraction directory was not created: $extractedEspeakPath');
+      }
+      for (final relativePath in requiredEspeakFiles) {
+        if (!await File('$extractedEspeakPath/$relativePath').exists()) {
+          throw Exception('Required eSpeak data file is missing: $relativePath');
+        }
+      }
+
+      // The piper_phonemize Flutter example identifies "en" as British English.
+      // This Piper model is en_GB, and sherpa's model metadata uses language "en".
+      final phonemizerStatus =
+          piper.PiperPhonemize.initialize(extractedEspeakPath);
       if (phonemizerStatus < 0) {
-        throw Exception('Piper could not initialize bundled espeak-ng data (status: $phonemizerStatus).');
+        throw Exception('Piper could not initialize eSpeak data at $extractedEspeakPath (status: $phonemizerStatus).');
       }
       final testPhonemes = piper.PiperPhonemize.phonemize(
-        'Hello world.', voice: 'en-gb',
+        'Hello world.', voice: 'en',
       );
       if (testPhonemes.isEmpty || testPhonemes.every((sentence) => sentence.isEmpty)) {
         throw Exception('Piper phonemizer initialized but produced no British-English phonemes.');
@@ -166,7 +205,7 @@ class JarvisService extends ChangeNotifier {
             : 'Piper setup failed: $_voiceInitError');
       }
 
-      final phonemes = piper.PiperPhonemize.phonemize(text, voice: 'en-gb')
+      final phonemes = piper.PiperPhonemize.phonemize(text, voice: 'en')
           .where((sentence) => sentence.isNotEmpty)
           .toList();
       if (phonemes.isEmpty) return;
