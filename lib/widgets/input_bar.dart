@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/jarvis_service.dart';
 import '../utils/constants.dart';
+import '../screens/call_screen.dart';
 
 class InputBar extends StatefulWidget {
   const InputBar({super.key});
@@ -110,6 +111,13 @@ class _InputBarState extends State<InputBar> {
               size: 21,
             ),
           ),
+
+          IconButton(
+            tooltip: 'Call JARVIS',
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CallScreen())),
+            icon: const Icon(Icons.call, color: JarvisColors.green, size: 22),
+          ),
+          const SizedBox(width: 4),
 
           // Send button.
           GestureDetector(
