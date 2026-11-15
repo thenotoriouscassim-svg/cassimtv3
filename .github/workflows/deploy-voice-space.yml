@@ -54,6 +54,8 @@ jobs:
           from huggingface_hub import HfApi
           repo_id = os.environ["HF_SPACE_REPO_ID"]
           api = HfApi(token=os.environ["HF_TOKEN"])
+          identity = api.whoami()
+          print("Hugging Face token account:", identity.get("name") or identity.get("fullname") or "unknown")
           api.create_repo(
               repo_id=repo_id,
               repo_type="space",
