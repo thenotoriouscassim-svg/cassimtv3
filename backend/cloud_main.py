@@ -9,6 +9,8 @@ import asyncio
 import tempfile
 import time
 import json
+from html.parser import HTMLParser
+from urllib.parse import parse_qs, urlparse
 from typing import Dict, List, Optional
 
 import httpx
@@ -139,54 +141,150 @@ class SearchRequest(BaseModel):
     query: str = Field(min_length=2, max_length=1000)
 
 
+class _DuckDuckGoResultsParser(HTMLParser):
+    """Extract ordinary DuckDuckGo HTML result titles, links and snippets."""
+    def __init__(self):
+        super().__init__()
+        self.results = []
+        self._current = None
+        self._capture = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        classes = attrs.get("class", "").split()
+        if tag == "a" and "result__a" in classes:
+            self._current = {"title": "", "url": attrs.get("href", ""), "snippet": ""}
+            self.results.append(self._current)
+            self._capture = "title"
+        elif self._current is not None and "result__snippet" in classes:
+            self._capture = "snippet"
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._capture == "title":
+            self._capture = None
+        elif tag in ("div", "td") and self._capture == "snippet":
+            self._capture = None
+
+    def handle_data(self, data):
+        if self._current is not None and self._capture:
+            self._current[self._capture] += data
+
+
+async def _search_without_gemini(query: str):
+    """Free web-search fallback; does not consume Gemini API quota."""
+    parser = _DuckDuckGoResultsParser()
+    try:
+        async with httpx.AsyncClient(
+            timeout=25,
+            follow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; JARVISAI/1.0; +https://cassimtv3.onrender.com)"}
+        ) as client:
+            response = await client.get(
+                "https://html.duckduckgo.com/html/",
+                params={"q": query},
+            )
+        response.raise_for_status()
+        parser.feed(response.text)
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Free web search timed out. Please try again.")
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="Free web search provider could not be reached.")
+
+    sources = []
+    seen = set()
+    for item in parser.results:
+        raw_url = item["url"].strip()
+        parsed = urlparse(raw_url)
+        if parsed.netloc.endswith("duckduckgo.com"):
+            raw_url = parse_qs(parsed.query).get("uddg", [raw_url])[0]
+        if not raw_url.startswith(("https://", "http://")) or raw_url in seen:
+            continue
+        seen.add(raw_url)
+        sources.append({
+            "title": " ".join(item["title"].split()) or raw_url,
+            "url": raw_url,
+            "snippet": " ".join(item["snippet"].split()),
+        })
+        if len(sources) >= 8:
+            break
+
+    if not sources:
+        raise HTTPException(status_code=502, detail="Free web search returned no readable results. Try rephrasing the query.")
+    lines = [f"Live web results for: {query}", "", "These are search-result snippets, not an AI-generated summary:"]
+    for index, source in enumerate(sources, 1):
+        lines.append(f"{index}. {source['title']}")
+        if source["snippet"]:
+            lines.append(source["snippet"])
+        lines.append(source["url"])
+        lines.append("")
+    return {
+        "answer": "\\n".join(lines).strip(),
+        "sources": sources,
+        "search_queries": [query],
+        "provider": "DuckDuckGo HTML (free fallback)",
+    }
+
+
 @app.post("/search")
 async def live_search(req: SearchRequest):
-    """Search the live web with Gemini Google Search grounding."""
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=503, detail="Live search is not configured because the Gemini API key is missing.")
+    """Search the live web; fall back to free search when Gemini quota is exhausted."""
     query = req.query.strip()
-    payload = {
-        "contents": [{
-            "role": "user",
-            "parts": [{"text": f"Search the live web for this query: {query}. Give a concise, useful answer based on current sources. Clearly distinguish verified facts from uncertainty."}]
-        }],
-        "tools": [{"google_search": {}}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200},
-    }
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
-    try:
-        async with httpx.AsyncClient(timeout=75) as client:
-            response = await client.post(url, params={"key": GEMINI_API_KEY}, json=payload)
-        if response.status_code >= 400:
-            try:
-                detail = response.json().get("error", {}).get("message", "The search provider rejected the request.")
-            except Exception:
-                detail = "The search provider rejected the request."
-            raise HTTPException(status_code=502, detail=f"Live search failed: {detail}")
-        data = response.json()
-        candidates = data.get("candidates", [])
-        candidate = candidates[0] if candidates else {}
-        parts = candidate.get("content", {}).get("parts", [])
-        answer = "".join(part.get("text", "") for part in parts).strip()
-        if not answer:
-            raise HTTPException(status_code=502, detail="Live search returned no answer.")
-        metadata = candidate.get("groundingMetadata", {})
-        sources = []
-        seen_urls = set()
-        for chunk in metadata.get("groundingChunks", []):
-            web_source = chunk.get("web", {})
-            uri = web_source.get("uri")
-            title = web_source.get("title") or uri
-            if uri and uri.startswith(("https://", "http://")) and uri not in seen_urls:
-                seen_urls.add(uri)
-                sources.append({"title": title, "url": uri})
-        return {"answer": answer, "sources": sources, "search_queries": metadata.get("webSearchQueries", [query])}
-    except HTTPException:
-        raise
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Live web search timed out. Please try again.")
-    except httpx.HTTPError:
-        raise HTTPException(status_code=502, detail="Could not reach the live search provider.")
+    if GEMINI_API_KEY:
+        payload = {
+            "contents": [{
+                "role": "user",
+                "parts": [{"text": f"Search the live web for this query: {query}. Give a concise, useful answer based on current sources. Clearly distinguish verified facts from uncertainty."}]
+            }],
+            "tools": [{"google_search": {}}],
+            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200},
+        }
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+        try:
+            async with httpx.AsyncClient(timeout=75) as client:
+                response = await client.post(url, params={"key": GEMINI_API_KEY}, json=payload)
+            if response.status_code >= 400:
+                try:
+                    error_data = response.json().get("error", {})
+                    detail = error_data.get("message", "The search provider rejected the request.")
+                    error_status = error_data.get("status", "")
+                except Exception:
+                    detail, error_status = "The search provider rejected the request.", ""
+                is_quota_error = (
+                    response.status_code == 429
+                    or error_status == "RESOURCE_EXHAUSTED"
+                    or "quota" in detail.lower()
+                    or "rate limit" in detail.lower()
+                )
+                if not is_quota_error:
+                    raise HTTPException(status_code=502, detail=f"Live search failed: {detail}")
+                print("Gemini search quota exhausted; switching to free DuckDuckGo search.")
+            else:
+                data = response.json()
+                candidates = data.get("candidates", [])
+                candidate = candidates[0] if candidates else {}
+                parts = candidate.get("content", {}).get("parts", [])
+                answer = "".join(part.get("text", "") for part in parts).strip()
+                if answer:
+                    metadata = candidate.get("groundingMetadata", {})
+                    sources = []
+                    seen_urls = set()
+                    for chunk in metadata.get("groundingChunks", []):
+                        web_source = chunk.get("web", {})
+                        uri = web_source.get("uri")
+                        title = web_source.get("title") or uri
+                        if uri and uri.startswith(("https://", "http://")) and uri not in seen_urls:
+                            seen_urls.add(uri)
+                            sources.append({"title": title, "url": uri})
+                    return {"answer": answer, "sources": sources, "search_queries": metadata.get("webSearchQueries", [query]), "provider": "Gemini Google Search"}
+                print("Gemini search returned no answer; switching to free DuckDuckGo search.")
+        except HTTPException:
+            raise
+        except httpx.TimeoutException:
+            print("Gemini search timed out; switching to free DuckDuckGo search.")
+        except httpx.HTTPError:
+            print("Gemini search network error; switching to free DuckDuckGo search.")
+
+    return await _search_without_gemini(query)
 
 
 class SpeechRequest(BaseModel):
