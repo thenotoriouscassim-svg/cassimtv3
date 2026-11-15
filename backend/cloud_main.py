@@ -340,7 +340,7 @@ async def text_to_speech(req: VoiceRequest):
         "format": "mp3",
         "latency": "balanced",
         "normalize": True,
-        "prosody": {"speed": 0.96, "volume": 0, "normalize_loudness": True},
+        "prosody": {"speed": 1.05, "volume": 0, "normalize_loudness": True},
     }
     try:
         async with httpx.AsyncClient(timeout=90) as client:
