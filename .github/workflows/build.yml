@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -17,17 +18,22 @@ jobs:
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
+          distribution: 'temurin'
           java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.16.0'
           channel: 'stable'
+          cache: true
 
-      # This repository was missing the Android Gradle project. Generate a
-      # clean Flutter Android scaffold without touching the Dart app or assets.
+      # This repository does not track the generated Android Gradle project.
+      # Generate the Flutter scaffold, preserving the custom manifest.
       - name: Restore missing Android project
         shell: bash
         run: |
@@ -38,6 +44,44 @@ jobs:
             cp -R /tmp/jarvis_android_scaffold/android ./android
             cp /tmp/jarvis-custom-manifest.xml android/app/src/main/AndroidManifest.xml
           fi
+
+      - name: Install Android SDK 34
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
+      # Flutter 3.16's generated scaffold pins Kotlin 1.7.x, which cannot
+      # compile dependencies carrying Kotlin 1.9 metadata.
+      - name: Configure Android and Kotlin versions
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          settings = Path("android/settings.gradle")
+          text = settings.read_text()
+          text, count = re.subn(
+              r'(id\\s+["\\']org\\.jetbrains\\.kotlin\\.android["\\']\\s+version\\s+["\\'])[^"\\']+(["\\'])',
+              r'\\g<1>1.9.22\\g<2>',
+              text,
+          )
+          if count != 1:
+              raise SystemExit(f"Expected one Kotlin Gradle plugin declaration, found {count}")
+          settings.write_text(text)
+
+          app_gradle = Path("android/app/build.gradle")
+          text = app_gradle.read_text()
+          text, count = re.subn(
+              r'compileSdk(?:Version)?\\s+flutter\\.compileSdkVersion',
+              'compileSdk 34',
+              text,
+          )
+          if count != 1:
+              raise SystemExit(f"Expected one Flutter compileSdk declaration, found {count}")
+          app_gradle.write_text(text)
+          PY
 
       - name: Get dependencies
         run: flutter pub get
