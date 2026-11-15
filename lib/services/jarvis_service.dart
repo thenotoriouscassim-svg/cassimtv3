@@ -143,13 +143,9 @@ class JarvisService extends ChangeNotifier {
 
       // Kokoro receives phoneme codepoints from piper_phonemize. Extract and
       // validate the bundled eSpeak data before initializing the phonemizer.
-      final extractedEspeakPath = await piper.extractEspeakNgData();
-      final extractedEspeakDir = Directory(extractedEspeakPath);
-      if (!await extractedEspeakDir.exists()) {
-        throw Exception(
-          'eSpeak data extraction directory was not created: $extractedEspeakPath',
-        );
-      }
+      final supportDirForEspeak = await getApplicationSupportDirectory();
+      final cachedEspeakDir =
+          Directory('${supportDirForEspeak.path}/espeak-ng-data');
       const requiredEspeakFiles = [
         'phontab',
         'phondata',
@@ -157,6 +153,26 @@ class JarvisService extends ChangeNotifier {
         'en_dict',
         'lang/gmw/en',
       ];
+      var espeakCacheComplete = await cachedEspeakDir.exists();
+      if (espeakCacheComplete) {
+        for (final relativePath in requiredEspeakFiles) {
+          if (!await File('${cachedEspeakDir.path}/$relativePath').exists()) {
+            espeakCacheComplete = false;
+            break;
+          }
+        }
+      }
+      if (!espeakCacheComplete && await cachedEspeakDir.exists()) {
+        await cachedEspeakDir.delete(recursive: true);
+      }
+
+      final extractedEspeakPath = await piper.extractEspeakNgData();
+      final extractedEspeakDir = Directory(extractedEspeakPath);
+      if (!await extractedEspeakDir.exists()) {
+        throw Exception(
+          'eSpeak data extraction directory was not created: $extractedEspeakPath',
+        );
+      }
       for (final relativePath in requiredEspeakFiles) {
         if (!await File('$extractedEspeakPath/$relativePath').exists()) {
           throw Exception('Required eSpeak data file is missing: $relativePath');
@@ -187,7 +203,6 @@ class JarvisService extends ChangeNotifier {
           model: modelFile.path,
           voices: voicesFile.path,
           tokens: tokensFile.path,
-          lang: 'en',
         ),
         numThreads: 2,
         debug: false,
