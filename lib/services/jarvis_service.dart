@@ -1,21 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:audioplayers/audioplayers.dart';
-import 'package:archive/archive.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:piper_phonemize/piper_phonemize.dart' as piper;
-import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../utils/constants.dart';
 import '../models/message.dart';
 import '../models/system_stats.dart';
 
-enum JarvisState { standby, wakeWordDetected, listening, processing, speaking }
+enum JarvisState { standby, processing }
 
 class JarvisService extends ChangeNotifier {
   JarvisState _state = JarvisState.standby;
@@ -25,25 +18,14 @@ class JarvisService extends ChangeNotifier {
   bool _isConnected = false;
   WebSocketChannel? _wsChannel;
   Timer? _statsTimer;
-  String _currentTranscript = '';
-  double _audioLevel = 0.0;
   String _backendUrl = JarvisStrings.backendUrl;
-  final AudioPlayer _voicePlayer = AudioPlayer();
-  sherpa.OfflineTts? _neuralTts;
-  bool _localTtsReady = false;
   int _retryTicks = 0;
-  bool _autoSpeak = true;
-  bool _voiceConfigured = false;
-  String? _voiceInitError;
 
   JarvisState get state => _state;
   List<Message> get conversation => List.unmodifiable(_conversation);
   SystemStats get systemStats => _systemStats;
   String get statusText => _statusText;
   bool get isConnected => _isConnected;
-  String get currentTranscript => _currentTranscript;
-  double get audioLevel => _audioLevel;
-  bool get voiceConfigured => _voiceConfigured;
 
   JarvisService() {
     _initialize();
@@ -53,14 +35,12 @@ class JarvisService extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       final savedUrl = prefs.getString('backend_url');
-      _autoSpeak = prefs.getBool('auto_speak') ?? true;
       if (savedUrl != null && savedUrl.trim().isNotEmpty) {
         _backendUrl = _normalizeUrl(savedUrl);
       }
     } catch (_) {
       // Use the cloud URL default if preferences are unavailable.
     }
-    await _initializeLocalVoice();
     await _connectToBackend();
     _startStatsPolling();
   }
@@ -68,224 +48,6 @@ class JarvisService extends ChangeNotifier {
   String _normalizeUrl(String value) =>
       value.trim().replaceAll(RegExp(r'/+$'), '');
 
-
-  Future<void> _initializeLocalVoice() async {
-    if (_localTtsReady && _neuralTts != null) return;
-    try {
-      const modelName = 'kokoro-int8-en-v0_19';
-      const modelUrl =
-          'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/$modelName.tar.bz2';
-
-      final supportDir = await getApplicationSupportDirectory();
-      final modelDir = Directory('${supportDir.path}/$modelName');
-      final modelFile = File('${modelDir.path}/model.int8.onnx');
-      final voicesFile = File('${modelDir.path}/voices.bin');
-      final tokensFile = File('${modelDir.path}/tokens.txt');
-
-      final modelValid =
-          await modelFile.exists() && await modelFile.length() > 50000000;
-      final voicesValid =
-          await voicesFile.exists() && await voicesFile.length() > 1000000;
-      final tokensValid =
-          await tokensFile.exists() && await tokensFile.length() > 100;
-      if (!modelValid || !voicesValid || !tokensValid) {
-        if (await modelDir.exists()) await modelDir.delete(recursive: true);
-        await modelDir.create(recursive: true);
-        final response = await http
-            .get(Uri.parse(modelUrl))
-            .timeout(const Duration(minutes: 8));
-        if (response.statusCode != 200) {
-          throw Exception(
-            'Kokoro voice download failed (HTTP ${response.statusCode}).',
-          );
-        }
-        final tarBytes = BZip2Decoder().decodeBytes(response.bodyBytes);
-        final files = TarDecoder().decodeBytes(tarBytes);
-        var foundModel = false;
-        var foundVoices = false;
-        var foundTokens = false;
-        for (final entry in files.files) {
-          if (!entry.isFile) continue;
-          final name = entry.name.split('/').last;
-          if (name == 'model.int8.onnx') {
-            await modelFile.writeAsBytes(
-              entry.content as List<int>,
-              flush: true,
-            );
-            foundModel = true;
-          } else if (name == 'voices.bin') {
-            await voicesFile.writeAsBytes(
-              entry.content as List<int>,
-              flush: true,
-            );
-            foundVoices = true;
-          } else if (name == 'tokens.txt') {
-            await tokensFile.writeAsBytes(
-              entry.content as List<int>,
-              flush: true,
-            );
-            foundTokens = true;
-          }
-        }
-        if (!foundModel ||
-            !foundVoices ||
-            !foundTokens ||
-            await modelFile.length() <= 50000000 ||
-            await voicesFile.length() <= 1000000 ||
-            await tokensFile.length() <= 100) {
-          throw Exception(
-            'Kokoro archive is incomplete: model.int8.onnx, voices.bin, or tokens.txt is missing.',
-          );
-        }
-      }
-
-      await piper.initBindingsAsync();
-
-      // Kokoro receives phoneme codepoints from piper_phonemize. Extract and
-      // validate the bundled eSpeak data before initializing the phonemizer.
-      final supportDirForEspeak = await getApplicationSupportDirectory();
-      final cachedEspeakDir =
-          Directory('${supportDirForEspeak.path}/espeak-ng-data');
-      const requiredEspeakFiles = [
-        'phontab',
-        'phondata',
-        'phonindex',
-        'en_dict',
-        'lang/gmw/en',
-      ];
-      var espeakCacheComplete = await cachedEspeakDir.exists();
-      if (espeakCacheComplete) {
-        for (final relativePath in requiredEspeakFiles) {
-          if (!await File('${cachedEspeakDir.path}/$relativePath').exists()) {
-            espeakCacheComplete = false;
-            break;
-          }
-        }
-      }
-      if (!espeakCacheComplete && await cachedEspeakDir.exists()) {
-        await cachedEspeakDir.delete(recursive: true);
-      }
-
-      final extractedEspeakPath = await piper.extractEspeakNgData();
-      final extractedEspeakDir = Directory(extractedEspeakPath);
-      if (!await extractedEspeakDir.exists()) {
-        throw Exception(
-          'eSpeak data extraction directory was not created: $extractedEspeakPath',
-        );
-      }
-      for (final relativePath in requiredEspeakFiles) {
-        if (!await File('$extractedEspeakPath/$relativePath').exists()) {
-          throw Exception('Required eSpeak data file is missing: $relativePath');
-        }
-      }
-
-      final phonemizerStatus =
-          piper.PiperPhonemize.initialize(extractedEspeakPath);
-      if (phonemizerStatus < 0) {
-        throw Exception(
-          'Kokoro phonemizer could not initialize eSpeak data (status: $phonemizerStatus).',
-        );
-      }
-      final testPhonemes = piper.PiperPhonemize.phonemize(
-        'Hello world.',
-        voice: 'en',
-      );
-      if (testPhonemes.isEmpty ||
-          testPhonemes.every((sentence) => sentence.isEmpty)) {
-        throw Exception(
-          'Kokoro phonemizer initialized but produced no English phonemes.',
-        );
-      }
-
-      sherpa.initBindings();
-      final modelConfig = sherpa.OfflineTtsModelConfig(
-        kokoro: sherpa.OfflineTtsKokoroModelConfig(
-          model: modelFile.path,
-          voices: voicesFile.path,
-          tokens: tokensFile.path,
-        ),
-        numThreads: 2,
-        debug: false,
-        provider: 'cpu',
-      );
-      final engine = sherpa.OfflineTts(
-        sherpa.OfflineTtsConfig(
-          model: modelConfig,
-          maxNumSentences: 1,
-        ),
-      );
-      _neuralTts = engine;
-      _localTtsReady = true;
-      _voiceConfigured = true;
-      _voiceInitError = null;
-      debugPrint(
-        'Kokoro ready: ${modelFile.path}; British male speaker ID 9 (bm_george); sample rate: ${engine.sampleRate}',
-      );
-      notifyListeners();
-    } catch (error) {
-      _localTtsReady = false;
-      _voiceConfigured = false;
-      _voiceInitError = error.toString().replaceFirst('Exception: ', '');
-      debugPrint('Kokoro initialization failed: $_voiceInitError');
-    }
-  }
-
-  Future<void> _speakResponse(String text) async {
-    if (!_autoSpeak || text.trim().isEmpty) return;
-    try {
-      if (!_localTtsReady || _neuralTts == null) {
-        await _initializeLocalVoice();
-      }
-      final engine = _neuralTts;
-      if (!_localTtsReady || engine == null) {
-        throw Exception(_voiceInitError == null
-            ? 'Kokoro initialization did not complete. Please retry.'
-            : 'Kokoro setup failed: $_voiceInitError');
-      }
-
-      final phonemes = piper.PiperPhonemize.phonemize(text, voice: 'en')
-          .where((sentence) => sentence.isNotEmpty)
-          .toList();
-      if (phonemes.isEmpty) return;
-
-      final audio = engine.generateWithConfig(
-        text: '',
-        config: sherpa.OfflineTtsGenerationConfig(
-          sid: 9,
-          speed: 0.96,
-          silenceScale: 0.2,
-          phonemeCodepoints: phonemes,
-        ),
-      );
-      if (audio.samples.isEmpty) {
-        throw Exception('The neural voice returned no audio.');
-      }
-
-      final tempDir = await getTemporaryDirectory();
-      final wavFile = File('${tempDir.path}/jarvis_voice_${DateTime.now().microsecondsSinceEpoch}.wav');
-      final written = sherpa.writeWave(
-        filename: wavFile.path,
-        samples: audio.samples,
-        sampleRate: audio.sampleRate,
-      );
-      if (!written) throw Exception('Could not create the speech audio file.');
-
-      await _voicePlayer.stop();
-      final completed = _voicePlayer.onPlayerComplete.first;
-      await _voicePlayer.play(DeviceFileSource(wavFile.path));
-      await completed.timeout(
-        Duration(seconds: (audio.samples.length / audio.sampleRate).ceil() + 15),
-      );
-      if (await wavFile.exists()) await wavFile.delete();
-    } catch (error) {
-      _addMessage(Message(
-        role: MessageRole.assistant,
-        content: 'Kokoro voice failed: ${error.toString().replaceFirst('Exception: ', '')}',
-        timestamp: DateTime.now(),
-        isError: true,
-      ));
-    }
-  }
 
   Future<void> searchWeb(String query) async {
     final cleanQuery = query.trim();
@@ -335,8 +97,6 @@ class JarvisService extends ChangeNotifier {
         content: buffer.toString(),
         timestamp: DateTime.now(),
       ));
-      _setState(JarvisState.speaking);
-      await _speakResponse(answer);
       _setState(JarvisState.standby);
     } catch (error) {
       _addMessage(Message(
@@ -349,43 +109,6 @@ class JarvisService extends ChangeNotifier {
     }
   }
 
-  Future<String> transcribeAudio(File audioFile) async {
-    final request = http.MultipartRequest(
-      'POST',
-      Uri.parse('$_backendUrl/transcribe'),
-    );
-    request.files.add(await http.MultipartFile.fromPath(
-      'file',
-      audioFile.path,
-      contentType: MediaType('audio', 'wav'),
-    ));
-    final streamed = await request.send().timeout(const Duration(seconds: 100));
-    final response = await http.Response.fromStream(streamed);
-    if (response.statusCode != 200) {
-      var detail = 'Speech recognition failed (HTTP ${response.statusCode}).';
-      try {
-        detail = (jsonDecode(response.body) as Map<String, dynamic>)['detail']?.toString() ?? detail;
-      } catch (_) {}
-      throw Exception(detail);
-    }
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final transcript = data['transcript']?.toString().trim() ?? '';
-    if (transcript.isEmpty) throw Exception('No speech was detected.');
-    return transcript;
-  }
-
-  Future<void> setAutoSpeak(bool enabled) async {
-    _autoSpeak = enabled;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('auto_speak', enabled);
-    if (!enabled) {
-      try { await _voicePlayer.stop(); } catch (_) {}
-    }
-    notifyListeners();
-  }
-
-  bool get autoSpeak => _autoSpeak;
-
   Future<void> _connectToBackend() async {
     try {
       final response = await http
@@ -395,7 +118,6 @@ class JarvisService extends ChangeNotifier {
         final health = jsonDecode(response.body) as Map<String, dynamic>;
         _isConnected =
             health['status'] == 'online' && health['ai_configured'] == true;
-        _voiceConfigured = _localTtsReady;
         if (_isConnected) _connectWebSocket();
       } else {
         _isConnected = false;
@@ -430,24 +152,6 @@ class JarvisService extends ChangeNotifier {
   void _handleWebSocketMessage(dynamic data) {
     final Map<String, dynamic> msg = jsonDecode(data);
     switch (msg['type']) {
-      case 'state_change':
-        _setState(JarvisState.values.byName(msg['state']));
-        break;
-      case 'transcript':
-        _currentTranscript = msg['text'] ?? '';
-        notifyListeners();
-        break;
-      case 'response':
-        _addMessage(Message(
-          role: MessageRole.assistant,
-          content: msg['text'] ?? '',
-          timestamp: DateTime.now(),
-        ));
-        break;
-      case 'audio_level':
-        _audioLevel = (msg['level'] as num).toDouble();
-        notifyListeners();
-        break;
       case 'stats':
         _systemStats = SystemStats.fromJson(msg['data']);
         notifyListeners();
@@ -457,13 +161,9 @@ class JarvisService extends ChangeNotifier {
 
   void _setState(JarvisState newState) {
     _state = newState;
-    _statusText = switch (newState) {
-      JarvisState.standby => JarvisStrings.standby,
-      JarvisState.wakeWordDetected => 'ACTIVATED',
-      JarvisState.listening => JarvisStrings.listening,
-      JarvisState.processing => JarvisStrings.processing,
-      JarvisState.speaking => JarvisStrings.speaking,
-    };
+    _statusText = newState == JarvisState.processing
+        ? JarvisStrings.processing
+        : JarvisStrings.standby;
     notifyListeners();
   }
 
@@ -521,8 +221,6 @@ class JarvisService extends ChangeNotifier {
           content: answer,
           timestamp: DateTime.now(),
         ));
-        _setState(JarvisState.speaking);
-        await _speakResponse(answer);
         _setState(JarvisState.standby);
       } else {
         String detail = 'Cloud service returned HTTP ${response.statusCode}.';
@@ -548,25 +246,6 @@ class JarvisService extends ChangeNotifier {
       ));
       _setState(JarvisState.standby);
     }
-  }
-
-  Future<void> activateListening() async {
-    if (!_isConnected) {
-      _addMessage(Message(
-        role: MessageRole.assistant,
-        content: 'Cloud backend not connected, sir. Please check your connection.',
-        timestamp: DateTime.now(),
-        isError: true,
-      ));
-      return;
-    }
-    _wsChannel?.sink.add(jsonEncode({'type': 'activate_listening'}));
-    _setState(JarvisState.listening);
-  }
-
-  Future<void> stopListening() async {
-    _wsChannel?.sink.add(jsonEncode({'type': 'stop_listening'}));
-    _setState(JarvisState.standby);
   }
 
   void _addMessage(Message message) {
@@ -646,9 +325,6 @@ class JarvisService extends ChangeNotifier {
   void dispose() {
     _statsTimer?.cancel();
     _wsChannel?.sink.close();
-    _voicePlayer.stop();
-    _voicePlayer.dispose();
-    _neuralTts?.free();
     super.dispose();
   }
 }
