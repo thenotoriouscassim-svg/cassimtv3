@@ -294,7 +294,7 @@ async def chat(req: ChatRequest):
         "system_instruction": {"parts": [{"text": JARVIS_SYSTEM_PROMPT}]},
         "contents": contents,
         # Use Gemini Flash maximum supported output budget for long code and detailed answers.
-        "generationConfig": {"maxOutputTokens": 65536, "thinkingConfig": {"thinkingLevel": "high"}},
+        "generationConfig": {"maxOutputTokens": 65536, "thinkingConfig": {"thinkingLevel": "medium"}},
     }
     try:
         async with httpx.AsyncClient(timeout=240) as client:
