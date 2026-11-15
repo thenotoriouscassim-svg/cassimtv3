@@ -22,11 +22,9 @@ class JarvisColors {
 class JarvisStrings {
   static const String appName      = 'JARVIS AI';
   static const String brand        = 'by CassimTV';
-  static const String wakeWord     = 'Jarvis';
   static const String defaultGreet = 'At your service, sir.';
   static const String ready        = 'Ever ready to assist you.';
   static const String standby      = 'STANDBY';
-  static const String listening    = 'LISTENING';
   static const String processing   = 'PROCESSING';
   static const String speaking     = 'SPEAKING';
   static const String backendUrl   = 'https://cassimtv3.onrender.com';
