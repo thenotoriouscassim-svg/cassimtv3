@@ -130,7 +130,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
       recognizer.dispose();
     }
     _linkRecognizers.clear();
-    final urlPattern = RegExp(r'https?://[^\\s]+');
+    final urlPattern = RegExp(r'https?://[^\s]+');
     final spans = <TextSpan>[];
     var lastIndex = 0;
     for (final match in urlPattern.allMatches(content)) {
