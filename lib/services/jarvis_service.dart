@@ -79,42 +79,52 @@ class JarvisService extends ChangeNotifier {
       final modelFile = File('${modelDir.path}/model.onnx');
       final tokensFile = File('${modelDir.path}/tokens.txt');
 
-      if (!await modelFile.exists() || !await tokensFile.exists()) {
+      final modelValid = await modelFile.exists() && await modelFile.length() > 10000000;
+      final tokensValid = await tokensFile.exists() && await tokensFile.length() > 0;
+      if (!modelValid || !tokensValid) {
+        if (await modelDir.exists()) await modelDir.delete(recursive: true);
+        await modelDir.create(recursive: true);
         final response = await http.get(Uri.parse(modelUrl))
             .timeout(const Duration(minutes: 5));
         if (response.statusCode != 200) {
-          throw Exception('Could not download the free British voice model (HTTP ${response.statusCode}).');
+          throw Exception('Piper model download failed (HTTP ${response.statusCode}).');
         }
         final tarBytes = BZip2Decoder().decodeBytes(response.bodyBytes);
         final files = TarDecoder().decodeBytes(tarBytes);
-        await modelDir.create(recursive: true);
-        String? discoveredModel;
-        String? discoveredTokens;
+        var foundModel = false;
+        var foundTokens = false;
         for (final entry in files.files) {
           if (!entry.isFile) continue;
           final name = entry.name.split('/').last;
-          if (name.endsWith('.onnx') && discoveredModel == null) {
-            final out = File('${modelDir.path}/model.onnx');
-            await out.writeAsBytes(entry.content as List<int>, flush: true);
-            discoveredModel = out.path;
-          } else if (name == 'tokens.txt') {
-            final out = File('${modelDir.path}/tokens.txt');
-            await out.writeAsBytes(entry.content as List<int>, flush: true);
-            discoveredTokens = out.path;
+          if (name.endsWith('.onnx') && !foundModel) {
+            await modelFile.writeAsBytes(entry.content as List<int>, flush: true);
+            foundModel = true;
+          } else if (name == 'tokens.txt' && !foundTokens) {
+            await tokensFile.writeAsBytes(entry.content as List<int>, flush: true);
+            foundTokens = true;
           }
         }
-        if (discoveredModel == null || discoveredTokens == null) {
-          throw Exception('The downloaded voice model is incomplete.');
+        if (!foundModel || !foundTokens ||
+            await modelFile.length() <= 10000000 ||
+            await tokensFile.length() == 0) {
+          throw Exception('Piper archive downloaded, but model.onnx or tokens.txt is missing or incomplete.');
         }
       }
 
       await piper.initBindingsAsync();
       final espeakData = await piper.extractEspeakNgData();
-      if (piper.PiperPhonemize.initialize(espeakData) < 0) {
-        throw Exception('Could not initialize the offline British phonemizer.');
+      final phonemizerStatus = piper.PiperPhonemize.initialize(espeakData);
+      if (phonemizerStatus < 0) {
+        throw Exception('Piper could not initialize espeak-ng data at: $espeakData');
       }
-      sherpa.initBindings();
+      final testPhonemes = piper.PiperPhonemize.phonemize(
+        'JARVIS voice test', voice: 'en-gb',
+      );
+      if (testPhonemes.isEmpty || testPhonemes.every((sentence) => sentence.isEmpty)) {
+        throw Exception('Piper phonemizer initialized but produced no British-English phonemes.');
+      }
 
+      sherpa.initBindings();
       final modelConfig = sherpa.OfflineTtsModelConfig(
         vits: sherpa.OfflineTtsVitsModelConfig(
           model: modelFile.path,
@@ -123,16 +133,18 @@ class JarvisService extends ChangeNotifier {
         numThreads: 2,
         debug: false,
       );
-      _neuralTts = sherpa.OfflineTts(
+      final engine = sherpa.OfflineTts(
         sherpa.OfflineTtsConfig(model: modelConfig, maxNumSentences: 1),
       );
+      _neuralTts = engine;
       _localTtsReady = true;
       _voiceConfigured = true;
+      debugPrint('Piper ready: ${modelFile.path}; phonemizer sample rate: $phonemizerStatus; TTS sample rate: ${engine.sampleRate}');
       notifyListeners();
     } catch (error) {
       _localTtsReady = false;
       _voiceConfigured = false;
-      debugPrint('Offline neural JARVIS voice initialization failed: $error');
+      debugPrint('Piper initialization failed: $error');
     }
   }
 
