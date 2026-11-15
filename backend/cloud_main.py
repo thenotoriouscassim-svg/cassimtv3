@@ -18,8 +18,7 @@ from pydantic import BaseModel, Field
 
 APP_STARTED = time.time()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = "gemini-3.8-flash"  # Primary model; keep fallbacks in descending quality order.
-GEMINI_FALLBACK_MODELS = ("gemini-3.5-flash", "gemini-3.5-flash-lite")
+GEMINI_MODEL = "gemini-3.5-flash-lite"  # Use Gemini Flash-Lite exclusively for speed and cost efficiency.
 FISH_API_KEY = os.getenv("FISH_API_KEY", "").strip()
 FISH_AUDIO_VOICE_ID = os.getenv("FISH_AUDIO_VOICE_ID", "").strip()
 FISH_AUDIO_MODEL = os.getenv("FISH_AUDIO_MODEL", "s2.1-pro-free").strip()
@@ -296,7 +295,7 @@ async def chat(req: ChatRequest):
         # Use Gemini Flash maximum supported output budget for long code and detailed answers.
         "generationConfig": {"maxOutputTokens": 65536},
     }
-    models_to_try = (GEMINI_MODEL,) + GEMINI_FALLBACK_MODELS
+    models_to_try = (GEMINI_MODEL,)
     last_provider_error = "The AI provider is temporarily unavailable."
     try:
         async with httpx.AsyncClient(timeout=180) as client:
