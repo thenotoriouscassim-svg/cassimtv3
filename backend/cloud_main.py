@@ -210,12 +210,11 @@ async def _search_without_gemini(query: str):
 
     if not sources:
         raise HTTPException(status_code=502, detail="Free web search returned no readable results. Try rephrasing the query.")
-    lines = [f"Live web results for: {query}", "", "These are search-result snippets, not an AI-generated summary:"]
+    lines = [f"Here is what I found about {query}:", ""]
     for index, source in enumerate(sources, 1):
         lines.append(f"{index}. {source['title']}")
         if source["snippet"]:
             lines.append(source["snippet"])
-        lines.append(source["url"])
         lines.append("")
     return {
         "answer": "\n".join(lines).strip(),
@@ -225,10 +224,49 @@ async def _search_without_gemini(query: str):
     }
 
 
+async def _get_weather_answer(query: str):
+    """Return current conditions and a short forecast using free Open-Meteo APIs."""
+    import re
+    place = re.sub(r"\b(weather|forecast|temperature|conditions|today|tomorrow|right now|current|please|what is|what's|in)\b", " ", query, flags=re.I)
+    place = re.sub(r"\s+", " ", place).strip(" ,?.") or "Durban"
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            geo = await client.get("https://geocoding-api.open-meteo.com/v1/search", params={"name": place, "count": 1, "language": "en", "format": "json"})
+            geo.raise_for_status()
+            places = geo.json().get("results", [])
+            if not places:
+                return None
+            city = places[0]
+            forecast = await client.get("https://api.open-meteo.com/v1/forecast", params={
+                "latitude": city["latitude"], "longitude": city["longitude"],
+                "current": "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m",
+                "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+                "forecast_days": 2, "timezone": "auto"
+            })
+            forecast.raise_for_status()
+            data = forecast.json()
+        current, daily = data.get("current", {}), data.get("daily", {})
+        code = int(current.get("weather_code", -1))
+        descriptions = {0:"clear sky",1:"mainly clear",2:"partly cloudy",3:"overcast",45:"foggy",48:"rime fog",51:"light drizzle",53:"drizzle",55:"dense drizzle",61:"light rain",63:"moderate rain",65:"heavy rain",71:"light snow",73:"snow",75:"heavy snow",80:"rain showers",81:"moderate rain showers",82:"heavy rain showers",95:"thunderstorms",96:"thunderstorms with hail",99:"severe thunderstorms"}
+        place_name = ", ".join(x for x in [city.get("name"), city.get("admin1"), city.get("country")] if x)
+        lines = [f"Current weather in {place_name}:", f"{descriptions.get(code, 'conditions unavailable').capitalize()}, {current.get('temperature_2m', '—')}°C (feels like {current.get('apparent_temperature', '—')}°C).", f"Humidity: {current.get('relative_humidity_2m', '—')}%. Wind: {current.get('wind_speed_10m', '—')} km/h. Precipitation: {current.get('precipitation', '—')} mm."]
+        dates = daily.get("time", [])
+        for i in range(min(2, len(dates))):
+            lines.append(f"{dates[i]}: {daily.get('temperature_2m_min', ['—']*2)[i]}–{daily.get('temperature_2m_max', ['—']*2)[i]}°C; rain chance up to {daily.get('precipitation_probability_max', ['—']*2)[i]}%.")
+        return {"answer": "\n".join(lines), "sources":[{"title":"Open-Meteo weather forecast","url":"https://open-meteo.com/"}], "search_queries":[query], "provider":"Open-Meteo"}
+    except (httpx.HTTPError, KeyError, ValueError, IndexError) as exc:
+        print("Weather lookup failed: {}".format(exc))
+        raise HTTPException(status_code=502, detail="I couldn't retrieve live weather for that location just now.")
+
+
 @app.post("/search")
 async def live_search(req: SearchRequest):
     """Search the live web; fall back to free search when Gemini quota is exhausted."""
     query = req.query.strip()
+    if any(term in query.lower() for term in ("weather", "forecast", "temperature")):
+        weather_result = await _get_weather_answer(query)
+        if weather_result:
+            return weather_result
     if GEMINI_API_KEY:
         payload = {
             "contents": [{
