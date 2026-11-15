@@ -34,9 +34,6 @@ dependencies:
   lottie: ^2.7.0
   shimmer: ^3.0.0
 
-  # WebSocket
-  web_socket_channel: ^2.4.0
-
   # Utilities
   intl: ^0.18.1
   uuid: ^3.0.7
