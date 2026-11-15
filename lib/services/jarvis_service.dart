@@ -408,7 +408,7 @@ class JarvisService extends ChangeNotifier {
               'conversation_history': history,
             }),
           )
-          .timeout(const Duration(seconds: 75));
+          .timeout(const Duration(seconds: 270));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
