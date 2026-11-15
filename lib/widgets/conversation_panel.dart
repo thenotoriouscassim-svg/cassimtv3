@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../services/jarvis_service.dart';
 import '../models/message.dart';
@@ -12,6 +13,8 @@ class ConversationPanel extends StatefulWidget {
 
 class _ConversationPanelState extends State<ConversationPanel> {
   final ScrollController _scroll = ScrollController();
+  bool _wasAtBottom = true;
+  int _lastMessageCount = 0;
 
   @override
   void dispose() {
@@ -19,12 +22,18 @@ class _ConversationPanelState extends State<ConversationPanel> {
     super.dispose();
   }
 
+  void _onScroll() {
+    if (!_scroll.hasClients) return;
+    final distance = _scroll.position.maxScrollExtent - _scroll.position.pixels;
+    _wasAtBottom = distance < 100;
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) {
+      if (mounted && _scroll.hasClients) {
         _scroll.animateTo(
           _scroll.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
+          duration: const Duration(milliseconds: 250),
           curve: Curves.easeOut,
         );
       }
@@ -34,19 +43,31 @@ class _ConversationPanelState extends State<ConversationPanel> {
   @override
   Widget build(BuildContext context) {
     final jarvis = context.watch<JarvisService>();
-    final msgs   = jarvis.conversation;
+    final msgs = jarvis.conversation;
 
-    if (msgs.isNotEmpty) _scrollToBottom();
+    if (msgs.length > _lastMessageCount && _wasAtBottom) {
+      _scrollToBottom();
+    }
+    _lastMessageCount = msgs.length;
 
     return Container(
       color: JarvisColors.background,
       child: msgs.isEmpty
           ? _buildEmpty()
-          : ListView.builder(
-              controller: _scroll,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              itemCount: msgs.length,
-              itemBuilder: (_, i) => _MessageBubble(message: msgs[i]),
+          : NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                if (notification is ScrollUpdateNotification ||
+                    notification is ScrollEndNotification) {
+                  _onScroll();
+                }
+                return false;
+              },
+              child: ListView.builder(
+                controller: _scroll,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                itemCount: msgs.length,
+                itemBuilder: (_, i) => _MessageBubble(message: msgs[i]),
+              ),
             ),
     );
   }
@@ -89,7 +110,7 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isUser      = message.role == MessageRole.user;
+    final isUser = message.role == MessageRole.user;
     final isAssistant = message.role == MessageRole.assistant;
 
     return Padding(
@@ -121,9 +142,9 @@ class _MessageBubble extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: isUser ? JarvisColors.glowBlue : JarvisColors.surfaceLight,
                     borderRadius: BorderRadius.only(
-                      topLeft:     Radius.circular(isUser ? 12 : 2),
-                      topRight:    Radius.circular(isUser ? 2  : 12),
-                      bottomLeft:  const Radius.circular(12),
+                      topLeft: Radius.circular(isUser ? 12 : 2),
+                      topRight: Radius.circular(isUser ? 2 : 12),
+                      bottomLeft: const Radius.circular(12),
                       bottomRight: const Radius.circular(12),
                     ),
                     border: Border.all(
@@ -137,7 +158,7 @@ class _MessageBubble extends StatelessWidget {
                         ? [BoxShadow(color: JarvisColors.cyan.withOpacity(0.05), blurRadius: 8)]
                         : null,
                   ),
-                  child: Text(
+                  child: SelectableText(
                     message.content,
                     style: TextStyle(
                       color: message.isError ? JarvisColors.red : JarvisColors.textPrimary,
@@ -148,14 +169,37 @@ class _MessageBubble extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  _formatTime(message.timestamp),
-                  style: TextStyle(
-                    color: JarvisColors.textDim,
-                    fontSize: 8,
-                    fontFamily: 'Orbitron',
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _formatTime(message.timestamp),
+                      style: TextStyle(
+                        color: JarvisColors.textDim,
+                        fontSize: 8,
+                        fontFamily: 'Orbitron',
+                      ),
+                    ),
+                    if (isAssistant)
+                      IconButton(
+                        tooltip: 'Copy response',
+                        visualDensity: VisualDensity.compact,
+                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                        padding: EdgeInsets.zero,
+                        icon: const Icon(Icons.copy, size: 14, color: JarvisColors.textSecondary),
+                        onPressed: () async {
+                          await Clipboard.setData(ClipboardData(text: message.content));
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Copied to clipboard'),
+                                duration: Duration(seconds: 1),
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                  ],
                 ),
               ],
             ),
