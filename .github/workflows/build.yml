@@ -53,34 +53,49 @@ jobs:
           yes | "$SDKMANAGER" --licenses || true
           "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Configure Android and Kotlin versions
+      - name: Configure Android build versions
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
 
-          settings = Path("android/settings.gradle")
-          text = settings.read_text()
-          text, count = re.subn(
-              r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])[^"\']+(["\'])',
-              r'\g<1>1.9.22\g<2>',
-              text,
-          )
-          if count != 1:
-              raise SystemExit(f"Expected one Kotlin Gradle plugin declaration, found {count}")
-          settings.write_text(text)
+          # Flutter templates have used more than one location/syntax for
+          # the Kotlin Gradle plugin. Update it wherever it is declared.
+          candidates = [
+              Path("android/settings.gradle"),
+              Path("android/build.gradle"),
+              Path("android/app/build.gradle"),
+          ]
+          patterns = [
+              (r'(id\\s+["\']org\\.jetbrains\\.kotlin\\.android["\']\\s+version\\s+["\'])[^"\']+(["\'])', r'\\g<1>1.9.22\\g<2>'),
+              (r'(kotlin_version\\s*=\\s*["\'])[^"\']+(["\'])', r'\\g<1>1.9.22\\g<2>'),
+          ]
+          for path in candidates:
+              if not path.exists():
+                  continue
+              source = path.read_text()
+              original = source
+              for pattern, replacement in patterns:
+                  source = re.sub(pattern, replacement, source)
+              if source != original:
+                  path.write_text(source)
+                  print(f"Updated Kotlin plugin version in {path}")
 
           app_gradle = Path("android/app/build.gradle")
-          text = app_gradle.read_text()
-          text, count = re.subn(
-              r'compileSdk(?:Version)?\s+flutter\.compileSdkVersion',
+          source = app_gradle.read_text()
+          source, count = re.subn(
+              r'compileSdk(?:Version)?\\s+flutter\\.compileSdkVersion',
               'compileSdk 34',
-              text,
+              source,
           )
-          if count != 1:
-              raise SystemExit(f"Expected one Flutter compileSdk declaration, found {count}")
-          app_gradle.write_text(text)
+          if count:
+              app_gradle.write_text(source)
+              print("Configured compileSdk 34")
+          elif re.search(r'compileSdk(?:Version)?\\s+34', source):
+              print("compileSdk 34 already configured")
+          else:
+              raise SystemExit("Could not locate compileSdk declaration in android/app/build.gradle")
           PY
 
       - name: Get dependencies
