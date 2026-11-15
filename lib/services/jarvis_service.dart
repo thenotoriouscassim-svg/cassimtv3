@@ -34,6 +34,7 @@ class JarvisService extends ChangeNotifier {
   int _retryTicks = 0;
   bool _autoSpeak = true;
   bool _voiceConfigured = false;
+  String? _voiceInitError;
 
   JarvisState get state => _state;
   List<Message> get conversation => List.unmodifiable(_conversation);
@@ -139,12 +140,14 @@ class JarvisService extends ChangeNotifier {
       _neuralTts = engine;
       _localTtsReady = true;
       _voiceConfigured = true;
+      _voiceInitError = null;
       debugPrint('Piper ready: ${modelFile.path}; phonemizer sample rate: $phonemizerStatus; TTS sample rate: ${engine.sampleRate}');
       notifyListeners();
     } catch (error) {
       _localTtsReady = false;
       _voiceConfigured = false;
-      debugPrint('Piper initialization failed: $error');
+      _voiceInitError = error.toString().replaceFirst('Exception: ', '');
+      debugPrint('Piper initialization failed: $_voiceInitError');
     }
   }
 
@@ -156,7 +159,9 @@ class JarvisService extends ChangeNotifier {
       }
       final engine = _neuralTts;
       if (!_localTtsReady || engine == null) {
-        throw Exception('The offline neural voice is not ready. Check your connection once to download the voice model.');
+        throw Exception(_voiceInitError == null
+            ? 'Piper initialization did not complete. Please retry.'
+            : 'Piper setup failed: $_voiceInitError');
       }
 
       final phonemes = piper.PiperPhonemize.phonemize(text, voice: 'en-gb')
