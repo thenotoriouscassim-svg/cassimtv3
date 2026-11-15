@@ -58,14 +58,27 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
+
+          # Flutter 3.16's Android template declares Kotlin in the root
+          # build.gradle as ext.kotlin_version = '1.7.10'.
+          root_gradle = Path("android/build.gradle")
+          source = root_gradle.read_text()
+          source, count = re.subn(
+              r"(?m)^(\\s*ext\\.kotlin_version\\s*=\\s*)['\"][^'\"]+['\"]",
+              r"\\g<1>'1.9.22'",
+              source,
+          )
+          if count != 1:
+              raise SystemExit(f"Expected one ext.kotlin_version declaration, found {count}")
+          root_gradle.write_text(source)
 
           app_gradle = Path("android/app/build.gradle")
           source = app_gradle.read_text()
           source = source.replace("flutter.compileSdkVersion", "34")
           source = source.replace("flutter.targetSdkVersion", "34")
           app_gradle.write_text(source)
-          print("Android app Gradle configuration:")
-          print(source)
+          print("Kotlin Gradle plugin set to 1.9.22; compileSdk set to 34")
           PY
 
       - name: Get dependencies
