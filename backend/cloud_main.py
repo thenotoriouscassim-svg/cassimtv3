@@ -27,6 +27,8 @@ GEMINI_STT_MODEL = os.getenv("GEMINI_STT_MODEL", GEMINI_MODEL).strip()
 GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
 GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON", "").strip()
 JARVIS_GEMINI_VOICE_ID = os.getenv("JARVIS_GEMINI_VOICE_ID", "").strip()
+JARVIS_VOICE_API_URL = os.getenv("JARVIS_VOICE_API_URL", "").strip()
+JARVIS_VOICE_API_KEY = os.getenv("JARVIS_VOICE_API_KEY", "").strip()
 GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts").strip()
 JARVIS_VOICE_PROMPT = (
     "A distinctly masculine, very deep low-register British baritone, mature adult "
@@ -353,124 +355,65 @@ def _google_cloud_access_token():
 
 @app.get("/voice/status")
 async def voice_status():
-    configured = bool(GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON and JARVIS_GEMINI_VOICE_ID)
+    configured = bool(JARVIS_VOICE_API_URL and JARVIS_VOICE_API_KEY)
     return {
         "configured": configured,
         "ready": configured,
-        "engine": "Gemini 3.8 Flash TTS Voice Design",
-        "voice": "JARVIS synthetic British baritone",
-        "detail": "Gemini designed voice is configured." if configured else
-            "Set Google Cloud project and service-account credentials, then create a JARVIS voice with POST /voice/setup and save its returned voice_id as JARVIS_GEMINI_VOICE_ID."
+        "engine": "Coqui XTTS-v2 voice clone",
+        "voice": "JARVIS voice from the supplied reference recordings",
+        "detail": "XTTS-v2 voice clone is configured." if configured else
+            "Set JARVIS_VOICE_API_URL and JARVIS_VOICE_API_KEY in Render."
     }
 
 
-@app.post("/voice/setup")
-async def setup_jarvis_voice():
-    """Create a custom synthetic JARVIS voice using Gemini Voice Design."""
-    if not GOOGLE_CLOUD_PROJECT:
-        raise HTTPException(status_code=503, detail="Set GOOGLE_CLOUD_PROJECT in Render first.")
-    token = _google_cloud_access_token()
-    url = "https://aiplatform.googleapis.com/v1beta1/projects/{}/locations/global/voices".format(GOOGLE_CLOUD_PROJECT)
-    payload = {
-        "store": True,
-        "voice": {
-            "type": "VOICE_TYPE_PROMPTED",
-            "displayName": "JARVIS AI by CassimTV",
-            "gender": "male",
-            "languageCode": "en-GB",
-            "prompted": {"input": JARVIS_VOICE_PROMPT}
-        }
-    }
+def _generate_xtts_audio(text: str) -> bytes:
+    """Call the private Hugging Face Gradio Space and return its WAV bytes."""
+    if not JARVIS_VOICE_API_URL or not JARVIS_VOICE_API_KEY:
+        raise RuntimeError("XTTS voice service is not configured in Render.")
+    from gradio_client import Client
+
+    client = Client(JARVIS_VOICE_API_URL, verbose=False)
+    result = client.predict(text[:2500], JARVIS_VOICE_API_KEY, api_name="/generate")
+    if isinstance(result, (tuple, list)):
+        result = result[0] if result else None
+    if isinstance(result, dict):
+        audio_path = result.get("path") or result.get("name")
+    else:
+        audio_path = result
+    if not isinstance(audio_path, str) or not os.path.isfile(audio_path):
+        raise RuntimeError("XTTS Space returned no downloadable audio file.")
     try:
-        async with httpx.AsyncClient(timeout=90) as client:
-            response = await client.post(url, headers={
-                "Authorization": "Bearer " + token,
-                "Content-Type": "application/json"
-            }, json=payload)
-        if response.status_code >= 400:
-            detail = response.text[:1200]
-            print("Gemini voice design error {}: {}".format(response.status_code, detail))
-            raise HTTPException(status_code=502, detail="Gemini Voice Design failed: " + detail)
-        data = response.json()
-        voice_id = data.get("id")
-        if not voice_id:
-            raise HTTPException(status_code=502, detail="Gemini did not return a voice ID.")
-        sample = data.get("sampleAudio", {})
-        return {
-            "created": True,
-            "voice_id": voice_id,
-            "display_name": "JARVIS AI by CassimTV",
-            "sample_audio_mime_type": sample.get("mimeType"),
-            "next_step": "Save voice_id as JARVIS_GEMINI_VOICE_ID in Render environment variables."
-        }
-    except HTTPException:
-        raise
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Gemini Voice Design timed out.")
-    except httpx.HTTPError:
-        raise HTTPException(status_code=502, detail="Could not reach Google Gemini Voice Design.")
+        with open(audio_path, "rb") as audio_file:
+            audio_bytes = audio_file.read()
+    finally:
+        try:
+            os.remove(audio_path)
+        except OSError:
+            pass
+    if len(audio_bytes) < 1000:
+        raise RuntimeError("XTTS Space returned an empty or incomplete audio file.")
+    return audio_bytes
 
 
 @app.post("/speak")
 async def speak(req: SpeechRequest):
-    """Generate JARVIS speech with a stored Gemini-designed synthetic voice."""
-    if not JARVIS_GEMINI_VOICE_ID:
-        raise HTTPException(status_code=503, detail="JARVIS Gemini voice has not been created. Configure Google Cloud and call /voice/setup.")
+    """Generate JARVIS speech with the private XTTS-v2 voice clone."""
     text = " ".join(req.text.split())
     if not text:
         raise HTTPException(status_code=400, detail="Speech text is empty.")
-    token = _google_cloud_access_token()
-    url = "https://aiplatform.googleapis.com/v1/projects/{}/locations/global/publishers/google/models/{}:generateContent".format(
-        GOOGLE_CLOUD_PROJECT, GEMINI_TTS_MODEL
-    )
-    payload = {
-        "contents": [{
-            "role": "user",
-            "parts": [{
-                "text": text[:4000],
-                "speechMetadata": {"style": "calm, measured, precise, naturally conversational; understated confidence"}
-            }]
-        }],
-        "generationConfig": {
-            "responseModalities": ["AUDIO"],
-            "speechConfig": {"voiceConfig": {"voice": JARVIS_GEMINI_VOICE_ID}}
-        }
-    }
+    if not JARVIS_VOICE_API_URL or not JARVIS_VOICE_API_KEY:
+        raise HTTPException(status_code=503, detail="The XTTS voice clone is not configured. Set JARVIS_VOICE_API_URL and JARVIS_VOICE_API_KEY in Render.")
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(url, headers={
-                "Authorization": "Bearer " + token,
-                "Content-Type": "application/json"
-            }, json=payload)
-        if response.status_code >= 400:
-            detail = response.text[:1200]
-            print("Gemini TTS error {}: {}".format(response.status_code, detail))
-            raise HTTPException(status_code=502, detail="Gemini speech generation failed: " + detail)
-        data = response.json()
-        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        audio = next((p.get("inlineData", {}) for p in parts if p.get("inlineData", {}).get("data")), None)
-        if not audio:
-            raise HTTPException(status_code=502, detail="Gemini returned no speech audio.")
-        raw = base64.b64decode(audio["data"])
-        mime = audio.get("mimeType", "audio/wav").split(";")[0]
-        if mime == "audio/l16":
-            import wave
-            import io
-            buffer = io.BytesIO()
-            with wave.open(buffer, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(24000)
-                wf.writeframes(raw)
-            raw = buffer.getvalue()
-            mime = "audio/wav"
-        return Response(content=raw, media_type=mime if mime.startswith("audio/") else "audio/wav")
-    except HTTPException:
-        raise
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Gemini speech generation timed out.")
-    except httpx.HTTPError:
-        raise HTTPException(status_code=502, detail="Could not reach Gemini speech generation.")
+        audio_bytes = await asyncio.wait_for(
+            asyncio.to_thread(_generate_xtts_audio, text),
+            timeout=180,
+        )
+        return Response(content=audio_bytes, media_type="audio/wav")
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="JARVIS voice generation timed out. The voice Space may be starting up; try again.")
+    except Exception as exc:
+        print("XTTS voice generation error: {}: {}".format(type(exc).__name__, exc))
+        raise HTTPException(status_code=502, detail="The XTTS voice service could not generate audio. Check the Hugging Face Space status and Render logs.")
 
 
 @app.post("/chat")
