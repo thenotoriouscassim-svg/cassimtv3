@@ -177,7 +177,7 @@ class JarvisService extends ChangeNotifier {
     }
   }
 
-  Future<void> sendTextMessage(String text, {bool speakResponse = false}) async {
+  Future<void> sendTextMessage(String text, {bool speakResponse = false, String memoryContext = ''}) async {
     if (text.trim().isEmpty) return;
 
     // Route explicit search commands and natural weather questions to live search.
@@ -217,7 +217,7 @@ class JarvisService extends ChangeNotifier {
             Uri.parse('$_backendUrl/chat'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({
-              'message': text,
+              'message': memoryContext.trim().isEmpty ? text : '${memoryContext.trim()}\n\nCurrent user message: $text',
               'conversation_history': history,
             }),
           )
