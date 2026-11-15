@@ -305,15 +305,19 @@ async def chat(req: ChatRequest):
             )
         if response.status_code >= 400:
             try:
-                detail = response.json().get("error", {}).get("message", "AI provider rejected the request.")
+                error_data = response.json().get("error", {})
+                detail = error_data.get("message", "AI provider rejected the request.")
+                print(f"Gemini chat API error: HTTP {response.status_code}; status={error_data.get('status', 'unknown')}; detail={detail[:3000]}")
             except Exception:
                 detail = "AI provider rejected the request."
+                print(f"Gemini chat API error: HTTP {response.status_code}; body={response.text[:3000]}")
             raise HTTPException(status_code=502, detail=f"JARVIS AI provider error: {detail}")
         data = response.json()
         candidates = data.get("candidates", [])
         parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
         answer = "".join(part.get("text", "") for part in parts).strip()
         if not answer:
+            print(f"Gemini chat returned no text: {json.dumps(data, ensure_ascii=False)[:4000]}")
             raise HTTPException(status_code=502, detail="The AI provider returned an empty response.")
         return {"response": answer}
     except HTTPException:
