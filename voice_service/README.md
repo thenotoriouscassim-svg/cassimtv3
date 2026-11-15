@@ -5,7 +5,7 @@ colorFrom: blue
 colorTo: purple
 sdk: gradio
 python_version: "3.10"
-suggested_hardware: zero-a10g
+hardware: zero-a10g
 pinned: false
 ---
 
