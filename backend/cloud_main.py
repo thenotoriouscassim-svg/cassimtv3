@@ -360,11 +360,11 @@ async def chat(req: ChatRequest):
     payload = {
         "system_instruction": {"parts": [{"text": JARVIS_SYSTEM_PROMPT}]},
         "contents": contents,
-        # Give coding and detailed answers enough room; 700 tokens cut long code off.
-        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 16384},
+        # Use Gemini Flash maximum supported output budget for long code and detailed answers.
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 65536},
     }
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=240) as client:
             response = await client.post(
                 url,
                 params={"key": GEMINI_API_KEY},
