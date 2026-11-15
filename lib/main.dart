@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'services/jarvis_service.dart';
-import 'services/audio_service.dart';
 import 'services/memory_service.dart';
 import 'screens/main_screen.dart';
 import 'utils/constants.dart';
@@ -27,7 +26,6 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => JarvisService()),
-        ChangeNotifierProvider(create: (_) => AudioService()),
         ChangeNotifierProvider(create: (_) => MemoryService()),
       ],
       child: const JarvisApp(),
