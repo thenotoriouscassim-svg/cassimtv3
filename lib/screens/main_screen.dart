@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/jarvis_service.dart';
-import '../services/audio_service.dart';
 import '../utils/constants.dart';
 import '../widgets/jarvis_core_widget.dart';
 import '../widgets/conversation_panel.dart';
@@ -35,8 +34,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   Future<void> _boot() async {
     await Future.delayed(const Duration(milliseconds: 300));
-    final audio = context.read<AudioService>();
-    await audio.playBoot();
     _bootController.forward();
     await Future.delayed(const Duration(milliseconds: 2500));
     setState(() => _booted = true);
