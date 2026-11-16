@@ -349,7 +349,7 @@ class JarvisService extends ChangeNotifier {
     final wantsLowerVolume = RegExp(r'\b(lower|decrease|turn down|reduce)\s+(?:the\s+)?volume\b').hasMatch(value);
     final wantsCpu = RegExp(r'\b(cpu|processor)\s+(?:usage|load|percentage)\b|\bcheck cpu\b').hasMatch(value);
     final wantsBatteryApps = RegExp(r'\b(which|what) apps? .*battery|\bbattery drain(?:ing)? apps?\b|\bapps? .*draining.*battery\b').hasMatch(value);
-    final wantsInfo = RegExp(r'\b(device info|system info|phone info|about this phone|check my device|check my phone|device details|system details|what phone am i using|what device am i using|battery(?: level| percentage| status)?|how much battery|storage(?: space| status)?|free storage|available storage|ram usage|memory usage|android version|phone model|device model)\b').hasMatch(value);
+    final wantsInfo = RegExp(r'\b(device info|system info|phone info|about this phone|check my device|check my phone|read my device|read device|device status|device summary|device details|system details|what phone am i using|what device am i using|battery(?: level| percentage| status)?|how much battery|storage(?: space| status)?|free storage|available storage|ram usage|memory usage|android version|phone model|device model)\b').hasMatch(value);
     final settingsMatch = RegExp(r'\b(open|show)\s+(?:the\s+)?(wi-?fi|network|bluetooth|display|screen|sound|audio|battery|apps|applications|system)?\s*settings\b').firstMatch(value);
     if (appMatch != null && !RegExp(r'\b(settings|battery usage|battery stats)\b').hasMatch(value)) {
       _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
