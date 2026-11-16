@@ -122,7 +122,7 @@ class JarvisService extends ChangeNotifier {
       value.trim().replaceAll(RegExp(r'/+$'), '');
 
 
-  Future<void> searchWeb(String query) async {
+  Future<void> searchWeb(String query, {bool speakResponse = false}) async {
     final cleanQuery = query.trim();
     if (cleanQuery.length < 2) return;
     _addMessage(Message(
@@ -170,14 +170,54 @@ class JarvisService extends ChangeNotifier {
         content: buffer.toString(),
         timestamp: DateTime.now(),
       ));
-      _startTypingResponse();
+      if (speakResponse) {
+        await _speakResponse(buffer.toString());
+      } else {
+        _startTypingResponse();
+      }
     } catch (error) {
+      // A failed live search should not become JARVIS's entire answer.
+      // Ask the normal assistant to help from existing knowledge, while
+      // explicitly telling it that no live results were retrieved.
+      try {
+        final fallback = await http.post(
+          Uri.parse('$_backendUrl/chat'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'message': 'The user asked: "$cleanQuery". Live web search was unavailable, so no current sources were retrieved. Answer helpfully using your existing knowledge only. Clearly mention that you could not verify live/current information, and do not claim to have searched the web.',
+            'conversation_history': <Map<String, String>>[],
+            'voice_mode': speakResponse,
+          }),
+        ).timeout(const Duration(seconds: 90));
+        if (fallback.statusCode == 200) {
+          final data = jsonDecode(fallback.body) as Map<String, dynamic>;
+          final answer = data['response']?.toString().trim() ?? '';
+          if (answer.isNotEmpty) {
+            _addMessage(Message(
+              role: MessageRole.assistant,
+              content: answer,
+              timestamp: DateTime.now(),
+            ));
+            if (speakResponse) {
+              await _speakResponse(answer);
+            } else {
+              _startTypingResponse();
+            }
+            return;
+          }
+        }
+      } catch (fallbackError) {
+        debugPrint('JARVIS search fallback failed: $fallbackError');
+      }
+      debugPrint('JARVIS live search failed: $error');
+      const message = 'Sir, live web search is temporarily unavailable. I can still help with what I already know, but I cannot verify the latest information right now.';
       _addMessage(Message(
         role: MessageRole.assistant,
-        content: error.toString().replaceFirst('Exception: ', ''),
+        content: message,
         timestamp: DateTime.now(),
-        isError: true,
+        isError: false,
       ));
+      if (speakResponse) await _speakResponse(message);
       _setState(JarvisState.standby);
     }
   }
@@ -554,11 +594,11 @@ class JarvisService extends ChangeNotifier {
       caseSensitive: false,
     ).firstMatch(trimmed);
     if (searchCommand != null && (searchCommand.group(1)?.trim().length ?? 0) >= 2) {
-      await searchWeb(searchCommand.group(1)!.trim());
+      await searchWeb(searchCommand.group(1)!.trim(), speakResponse: speakResponse);
       return;
     }
     if (weatherCommand != null) {
-      await searchWeb("${weatherCommand.group(1)!.trim()} weather");
+      await searchWeb("${weatherCommand.group(1)!.trim()} weather", speakResponse: speakResponse);
       return;
     }
 
