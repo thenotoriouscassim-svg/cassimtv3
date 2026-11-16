@@ -64,6 +64,7 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=12000)
     conversation_history: List[Dict[str, str]] = Field(default_factory=list)
+    voice_mode: bool = False
 
 class CommandRequest(BaseModel):
     command: str = Field(min_length=1, max_length=2000)
@@ -440,10 +441,16 @@ async def chat(req: ChatRequest):
     contents.append({"role": "user", "parts": [{"text": req.message}]})
 
     payload = {
-        "system_instruction": {"parts": [{"text": JARVIS_SYSTEM_PROMPT}]},
+        "system_instruction": {"parts": [{"text": (
+            JARVIS_SYSTEM_PROMPT
+            + ("\\n\\nVOICE CALL MODE: Reply immediately and naturally in 1-3 short spoken sentences. "
+               "Lead with the direct answer. Avoid long lists, markdown, preambles, and unnecessary explanations. "
+               "Only give a detailed answer when the user explicitly asks for one."
+               if req.voice_mode else "")
+        )}]},
         "contents": contents,
-        # Use Gemini Flash maximum supported output budget for long code and detailed answers.
-        "generationConfig": {"maxOutputTokens": 65536},
+        # Voice calls need a short spoken answer; normal chat retains its full output budget.
+        "generationConfig": {"maxOutputTokens": 512 if req.voice_mode else 65536},
     }
     models_to_try = (GEMINI_MODEL,)
     last_provider_error = "The AI provider is temporarily unavailable."
@@ -516,7 +523,7 @@ async def text_to_speech(req: VoiceRequest):
         "text": req.text,
         "reference_id": FISH_AUDIO_VOICE_ID,
         "format": "mp3",
-        "latency": "balanced",
+        "latency": "low",\n        "chunk_length": 100,
         "prosody": {"speed": 1.00, "volume": 0},
     }
     try:
