@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 import httpx
 import psutil
 from fastapi import FastAPI, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -323,36 +324,49 @@ Never reveal internal model, provider, API, key, or server implementation detail
         "messages": messages,
         "temperature": 0.2,
         "max_tokens": 8192,
-        "stream": False,
+        "stream": True,
     }
+    client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=12.0))
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=12.0)) as client:
-            response = await client.post(
-                "https://api.z.ai/api/paas/v4/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {ZAI_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-        if response.status_code >= 400:
-            print("Coding service request failed with HTTP {}.".format(response.status_code))
+        request = client.build_request(
+            "POST",
+            "https://api.z.ai/api/paas/v4/chat/completions",
+            headers={
+                "Authorization": f"Bearer {ZAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        upstream = await client.send(request, stream=True)
+        if upstream.status_code >= 400:
+            status = upstream.status_code
+            await upstream.aclose()
+            await client.aclose()
+            print("Coding service request failed with HTTP {}.".format(status))
             raise HTTPException(
                 status_code=502,
                 detail="The coding service could not complete that request. Please try again."
             )
-        data = response.json()
-        choices = data.get("choices", [])
-        answer = choices[0].get("message", {}).get("content", "") if choices else ""
-        if not isinstance(answer, str) or not answer.strip():
-            raise HTTPException(status_code=502, detail="The coding service returned an empty answer.")
-        return {"response": answer.strip()}
-    except HTTPException:
-        raise
     except httpx.TimeoutException:
+        await client.aclose()
         raise HTTPException(status_code=504, detail="The coding request took too long. Please try again.")
     except httpx.HTTPError:
+        await client.aclose()
         raise HTTPException(status_code=502, detail="JARVIS could not reach the coding service.")
+
+    async def relay_code_stream():
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        relay_code_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/chat")
