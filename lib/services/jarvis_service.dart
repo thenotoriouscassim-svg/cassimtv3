@@ -313,8 +313,6 @@ class JarvisService extends ChangeNotifier {
     if (text.trim().isEmpty) return;
     if (await _handleDeviceRequest(text.trim())) return;
 
-    if (await _handleDeviceRequest(text.trim())) return;
-
     // Route explicit search commands and natural weather questions to live search.
     final trimmed = text.trim();
     final searchCommand = RegExp(
