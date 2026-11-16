@@ -134,7 +134,12 @@ class _CallScreenState extends State<CallScreen> {
     if (mounted) setState(() => _status = 'JARVIS is thinking...');
     try {
       final spoken = text.trim();
-      if (RegExp(r'^jarvis[.!?, ]*
+      if (RegExp(r'^jarvis[.!?, ]*$', caseSensitive: false).hasMatch(spoken)) {
+        await context.read<JarvisService>().speakText('At your service.');
+      } else {
+        final command = spoken.replaceFirst(RegExp(r'^jarvis[, ]+', caseSensitive: false), '').trim();
+        await context.read<JarvisService>().sendTextMessage(command.isEmpty ? spoken : command, speakResponse: true, memoryContext: context.read<MemoryService>().buildMemoryContext());
+      }
     } finally {
       _busy = false;
       _handlingTurn = false;
