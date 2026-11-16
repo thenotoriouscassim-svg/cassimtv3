@@ -320,51 +320,80 @@ Never reveal internal model, provider, API, key, or server implementation detail
     messages.append({"role": "user", "content": req.message})
 
     payload = {
-        "model": ZAI_CODE_MODEL,
         "messages": messages,
         "temperature": 0.2,
         "max_tokens": 8192,
         "stream": True,
     }
     client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=12.0))
+    upstream = None
+    last_error = None
+    # Both models are listed as free on Z.ai's standard API. If 4.7-Flash
+    # returns provider overload (1305), automatically try 4.5-Flash.
+    model_fallbacks = [ZAI_CODE_MODEL]
+    if ZAI_CODE_MODEL != "glm-4.5-flash":
+        model_fallbacks.append("glm-4.5-flash")
+
     try:
-        request = client.build_request(
-            "POST",
-            "https://api.z.ai/api/paas/v4/chat/completions",
-            headers={
-                "Authorization": f"Bearer {ZAI_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
-        upstream = None
-        for attempt in range(3):
-            upstream = await client.send(request, stream=True)
-            if upstream.status_code != 429 or attempt == 2:
+        for model_name in model_fallbacks:
+            payload["model"] = model_name
+            model_succeeded = False
+            for attempt in range(2):
+                request = client.build_request(
+                    "POST",
+                    "https://api.z.ai/api/paas/v4/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {ZAI_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                upstream = await client.send(request, stream=True)
+                if upstream.status_code < 400:
+                    model_succeeded = True
+                    break
+
+                status = upstream.status_code
+                error_body = await upstream.aread()
+                provider_code = "unknown"
+                provider_message = "No error message returned"
+                try:
+                    error_data = json.loads(error_body.decode("utf-8", errors="replace"))
+                    provider_error = error_data.get("error", error_data)
+                    if isinstance(provider_error, dict):
+                        provider_code = str(provider_error.get("code", provider_error.get("type", "unknown")))[:80]
+                        provider_message = str(provider_error.get("message", provider_error.get("detail", provider_error)))[:300]
+                except (ValueError, TypeError):
+                    provider_message = error_body.decode("utf-8", errors="replace")[:300] or provider_message
+
+                await upstream.aclose()
+                print("Coding provider rejected model {}: HTTP {} code={} message={}".format(
+                    model_name, status, provider_code, provider_message
+                ))
+
+                # A 1305 is specifically reported by Z.ai as temporary model
+                # overload. Move to the other free Flash model instead of
+                # repeatedly sending the same request to the overloaded model.
+                if provider_code == "1305":
+                    last_error = (status, provider_code, provider_message)
+                    break
+                if status == 429 and attempt == 0:
+                    await asyncio.sleep(2)
+                    continue
+
+                last_error = (status, provider_code, provider_message)
                 break
-            await upstream.aclose()
-            await asyncio.sleep(1.5 * (attempt + 1))
-        if upstream.status_code >= 400:
-            status = upstream.status_code
-            error_body = await upstream.aread()
-            provider_code = "unknown"
-            provider_message = "No error message returned"
-            try:
-                error_data = json.loads(error_body.decode("utf-8", errors="replace"))
-                provider_error = error_data.get("error", error_data)
-                if isinstance(provider_error, dict):
-                    provider_code = str(provider_error.get("code", provider_error.get("type", "unknown")))[:80]
-                    provider_message = str(provider_error.get("message", provider_error.get("detail", provider_error)))[:300]
-            except (ValueError, TypeError):
-                provider_message = error_body.decode("utf-8", errors="replace")[:300] or provider_message
-            await upstream.aclose()
+
+            if model_succeeded:
+                break
+        else:
+            model_succeeded = False
+
+        if not model_succeeded:
             await client.aclose()
-            print("Coding provider rejected request: HTTP {} code={} message={}".format(
-                status, provider_code, provider_message
-            ))
             raise HTTPException(
                 status_code=502,
-                detail="The coding service could not complete that request. Please try again."
+                detail="The coding service is temporarily unavailable. Please try again shortly."
             )
     except httpx.TimeoutException:
         await client.aclose()
@@ -372,6 +401,8 @@ Never reveal internal model, provider, API, key, or server implementation detail
     except httpx.HTTPError:
         await client.aclose()
         raise HTTPException(status_code=502, detail="JARVIS could not reach the coding service.")
+    except HTTPException:
+        raise
 
     async def relay_code_stream():
         try:
