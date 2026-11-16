@@ -72,11 +72,13 @@ class _CallScreenState extends State<CallScreen> {
         cancelOnError: true,
         listenMode: stt.ListenMode.dictation,
       );
+      // The speech plugin may report isListening a moment after listen() returns.
+      // Do not restart here; wait for its status callback to avoid start/stop loops.
       _armSilenceTimeout();
-      if (mounted && !_speech.isListening) _scheduleListenRestart();
     } catch (error) {
+      _holdListening = true;
       if (mounted) setState(() => _status = 'Could not start microphone: $error');
-      _scheduleListenRestart();
+    }
     } finally {
       _startingListen = false;
     }
@@ -86,8 +88,7 @@ class _CallScreenState extends State<CallScreen> {
     _restartTimer?.cancel();
     _restartTimer = Timer(const Duration(milliseconds: 700), () async {
       if (!_active || _busy || _handlingTurn || _holdListening || !mounted) return;
-      if (_speech.isListening) return;
-      await _speech.cancel();
+      if (_speech.isListening || _startingListen) return;
       await _listen();
     });
   }
@@ -120,10 +121,12 @@ class _CallScreenState extends State<CallScreen> {
       setState(() => _status = 'Listening — speak now');
     }
     if (status == 'done' || status == 'notListening') {
-      if (_holdListening) return;
-      if (!_handlingTurn && !_busy && _heard.trim().isNotEmpty) {
-        _handleTurn(_heard);
-      } else if (!_handlingTurn && !_busy) {
+      _silenceTimer?.cancel();
+      if (_holdListening || _handlingTurn || _busy) return;
+      final transcript = _heard.trim();
+      if (transcript.isNotEmpty) {
+        _handleTurn(transcript);
+      } else {
         _scheduleListenRestart();
       }
     }
@@ -133,6 +136,9 @@ class _CallScreenState extends State<CallScreen> {
     if (_handlingTurn || !_active || text.trim().isEmpty) return;
     _handlingTurn = true;
     _busy = true;
+    _holdListening = true;
+    _silenceTimer?.cancel();
+    _restartTimer?.cancel();
     await _speech.stop();
     if (mounted) setState(() => _status = 'JARVIS is thinking...');
     try {
@@ -148,8 +154,11 @@ class _CallScreenState extends State<CallScreen> {
       _handlingTurn = false;
       if (_active && mounted) {
         setState(() => _status = 'Your turn...');
-        await Future.delayed(const Duration(milliseconds: 400));
-        await _listen();
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (_active && mounted) {
+          _holdListening = false;
+          await _listen();
+        }
       }
     }
   }
