@@ -143,7 +143,7 @@ async def _search_without_gemini(query: str):
         try:
             timeout = httpx.Timeout(14.0, connect=5.0, read=9.0, write=5.0, pool=5.0)
             async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
-                response = await client.get(endpoint, params={"q": query, "p": query} if "yahoo" in endpoint else {"q": query})
+                response = await client.get(endpoint, params=({"q": query, "format": "rss"} if mode == "rss" else {"p": query} if "yahoo" in endpoint else {"q": query}))
             response.raise_for_status()
             sources = []
 
