@@ -269,6 +269,8 @@ class JarvisService extends ChangeNotifier {
     }
   }
 
+  Future<void> speakText(String text) => _speakResponse(text);
+
   Future<void> _killBackgroundProcesses() async {
     _setStatus(JarvisState.processing, 'Checking Android system-control access…');
     try {
