@@ -136,7 +136,7 @@ class JarvisService extends ChangeNotifier {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'query': cleanQuery}),
           )
-          .timeout(const Duration(seconds: 90));
+          .timeout(const Duration(seconds: 270));
       if (response.statusCode != 200) {
         var detail = 'Live search failed (HTTP ${response.statusCode}).';
         try {
@@ -268,7 +268,7 @@ class JarvisService extends ChangeNotifier {
 
   Future<bool> _handleDeviceRequest(String text) async {
     final value = text.toLowerCase();
-    final wantsInfo = RegExp(r'\b(device info|system info|phone info|about this phone|check my device|check my phone|device details|system details|what phone am i using|what device am i using)\b').hasMatch(value);
+    final wantsInfo = RegExp(r'\b(device info|system info|phone info|about this phone|check my device|check my phone|device details|system details|what phone am i using|what device am i using|battery(?: level| percentage| status)?|how much battery|storage(?: space| status)?|free storage|available storage|ram usage|memory usage|android version|phone model|device model)\b').hasMatch(value);
     final settingsMatch = RegExp(r'\b(open|show)\s+(?:the\s+)?(wi-?fi|network|bluetooth|display|screen|sound|audio|battery|apps|applications|system)?\s*settings\b').firstMatch(value);
     if (!wantsInfo && settingsMatch == null) return false;
 
@@ -316,11 +316,11 @@ class JarvisService extends ChangeNotifier {
     // Route explicit search commands and natural weather questions to live search.
     final trimmed = text.trim();
     final searchCommand = RegExp(
-      r"^(?:please\\s+)?(?:search(?:\\s+the\\s+web)?|look\\s+up|google|find\\s+online)(?:\\s+for)?\\s*[:,-]?\\s*(.+)$",
+      r"^(?:please\s+)?(?:search(?:\s+the\s+web)?|look\s+up|google|find\s+online)(?:\s+for)?\s*[:,-]?\s*(.+)$",
       caseSensitive: false,
     ).firstMatch(trimmed);
     final weatherCommand = RegExp(
-      r"^(?:what(?:'s| is)\\s+)?(?:the\\s+)?(.+?)\\s+(?:weather|forecast)(?:\\s+today|\\s+tomorrow)?\\??$",
+      r"^(?:what(?:'s| is)\s+)?(?:the\s+)?(.+?)\s+(?:weather|forecast)(?:\s+today|\s+tomorrow)?\??$",
       caseSensitive: false,
     ).firstMatch(trimmed);
     if (searchCommand != null && (searchCommand.group(1)?.trim().length ?? 0) >= 2) {
