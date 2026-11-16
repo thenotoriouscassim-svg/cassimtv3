@@ -54,7 +54,7 @@ class _CallScreenState extends State<CallScreen> {
         if (result.finalResult) _handleTurn(_heard);
       },
       listenFor: const Duration(minutes: 2),
-      pauseFor: const Duration(seconds: 2),
+      pauseFor: const Duration(milliseconds: 900),
       partialResults: true,
       cancelOnError: true,
       listenMode: stt.ListenMode.confirmation,
