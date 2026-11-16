@@ -71,7 +71,7 @@ class MainActivity : FlutterActivity() {
                                 "bluetooth" -> Settings.ACTION_BLUETOOTH_SETTINGS
                                 "display", "screen" -> Settings.ACTION_DISPLAY_SETTINGS
                                 "sound", "audio" -> Settings.ACTION_SOUND_SETTINGS
-                                "battery" -> Settings.ACTION_BATTERY_SAVER_SETTINGS
+                                "battery" -> "android.intent.action.POWER_USAGE_SUMMARY"
                                 "apps", "applications" -> Settings.ACTION_APPLICATION_SETTINGS
                                 else -> Settings.ACTION_SETTINGS
                             }
