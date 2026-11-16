@@ -36,7 +36,9 @@ class _CallScreenState extends State<CallScreen> {
       onStatus: _onSpeechStatus,
       onError: (error) {
         if (!mounted) return;
-        setState(() => _status = 'Microphone: ${error.errorMsg}');
+        _startingListen = false;
+        setState(() => _status = 'Speech recognition error: ${error.errorMsg}');
+        if (_active && !error.permanent && !_holdListening) _scheduleListenRestart();
       },
     );
     if (!_available) {
