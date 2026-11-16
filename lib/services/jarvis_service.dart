@@ -320,19 +320,19 @@ class JarvisService extends ChangeNotifier {
       if (!result.contains('JARVIS_BACKGROUND_CLEANUP_COMPLETE')) {
         throw Exception(result.isEmpty ? 'Android did not confirm the cleanup command.' : result);
       }
-      final memoryLines = result.split('\\n').where((line) => line.startsWith('MemAvailable:')).toList();
+      final memoryLines = result.split('\n').where((line) => line.startsWith('MemAvailable:')).toList();
       final memoryLine = memoryLines.isEmpty ? null : memoryLines.first;
       var memoryText = '';
       if (memoryLine != null) {
-        final match = RegExp(r'MemAvailable:\\s+(\\d+)\\s+kB').firstMatch(memoryLine);
+        final match = RegExp(r'MemAvailable:\s+(\d+)\s+kB').firstMatch(memoryLine);
         if (match != null) {
           final mb = (int.parse(match.group(1)!) / 1024).round();
-          memoryText = '\\nAvailable memory after cleanup: $mb MB.';
+          memoryText = '\nAvailable memory after cleanup: $mb MB.';
         }
       }
       _addMessage(Message(
         role: MessageRole.assistant,
-        content: 'On it, sir. Android confirmed that eligible background processes were terminated.$memoryText\\nApps and system services may automatically restart when needed.',
+        content: 'On it, sir. Android confirmed that eligible background processes were terminated.$memoryText\nApps and system services may automatically restart when needed.',
         timestamp: DateTime.now(),
       ));
       _setState(JarvisState.standby);
