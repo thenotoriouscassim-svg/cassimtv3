@@ -324,6 +324,7 @@ Never reveal internal model, provider, API, key, or server implementation detail
         "temperature": 0.2,
         "max_tokens": 8192,
         "stream": True,
+        "thinking": {"type": "disabled"},
     }
     client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=12.0))
     upstream = None
