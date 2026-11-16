@@ -68,7 +68,7 @@ class _ConversationPanelState extends State<ConversationPanel> {
               child: ListView.builder(
                 controller: _scroll,
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                itemCount: msgs.length + (jarvis.state == JarvisState.processing && !jarvis.isTypingResponse ? 1 : 0),
+                itemCount: msgs.length + (jarvis.state == JarvisState.processing ? 1 : 0),
                 itemBuilder: (_, i) {
                   if (i < msgs.length) return _MessageBubble(message: msgs[i], animate: jarvis.isTypingResponse && i == msgs.length - 1);
                   return const _ThinkingIndicator();
@@ -209,12 +209,12 @@ class _MessageBubbleState extends State<_MessageBubble> {
     var position = 0;
     final fullText = widget.message.content;
     _typingTimer?.cancel();
-    _typingTimer = Timer.periodic(const Duration(milliseconds: 18), (timer) {
+    _typingTimer = Timer.periodic(const Duration(milliseconds: 40), (timer) {
       if (!mounted) {
         timer.cancel();
         return;
       }
-      position = (position + 4).clamp(0, fullText.length);
+      position = (position + 3).clamp(0, fullText.length);
       setState(() => _visibleContent = fullText.substring(0, position));
       if (position - _lastAutoScrollLength >= 24) {
         _lastAutoScrollLength = position;
