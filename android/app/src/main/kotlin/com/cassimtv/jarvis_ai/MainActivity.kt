@@ -1,5 +1,6 @@
 package com.cassimtv.jarvis_ai
 
+import android.Manifest
 import android.app.ActivityManager
 import android.media.AudioManager
 import android.content.pm.PackageManager
@@ -20,6 +21,14 @@ import java.util.Locale
 
 class MainActivity : FlutterActivity() {
     private val channelName = "jarvis/device"
+
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 4101)
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
