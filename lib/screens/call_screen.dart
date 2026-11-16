@@ -21,6 +21,7 @@ class _CallScreenState extends State<CallScreen> {
   String _heard = '';
   String _status = 'Connecting microphone...';
   Timer? _silenceTimer;
+  bool _holdListening = false;
 
   @override
   void initState() {
@@ -46,6 +47,7 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _listen() async {
     if (!_active || _busy || !_available || _speech.isListening) return;
+    _holdListening = false;
     _heard = '';
     if (mounted) setState(() => _status = 'Listening — speak now');
     await _speech.listen(
@@ -68,6 +70,7 @@ class _CallScreenState extends State<CallScreen> {
     _silenceTimer?.cancel();
     _silenceTimer = Timer(const Duration(seconds: 25), () async {
       if (!_active || _busy || _handlingTurn || !_speech.isListening || _heard.trim().isNotEmpty) return;
+      _holdListening = true;
       await _speech.stop();
       if (mounted) setState(() => _status = 'No speech detected. Tap the mic to try again.');
     });
@@ -75,10 +78,12 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _toggleListening() async {
     if (_speech.isListening) {
+      _holdListening = true;
       _silenceTimer?.cancel();
       await _speech.stop();
       if (mounted) setState(() => _status = 'Microphone paused. Tap to resume.');
     } else {
+      _holdListening = false;
       await _listen();
     }
   }
@@ -89,6 +94,7 @@ class _CallScreenState extends State<CallScreen> {
       setState(() => _status = 'Listening — speak now');
     }
     if (status == 'done' || status == 'notListening') {
+      if (_holdListening) return;
       if (!_handlingTurn && !_busy && _heard.trim().isNotEmpty) {
         _handleTurn(_heard);
       } else if (!_handlingTurn && !_busy) {
