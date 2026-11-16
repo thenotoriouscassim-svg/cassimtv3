@@ -1,6 +1,8 @@
 package com.cassimtv.jarvis_ai
 
 import android.app.ActivityManager
+import android.media.AudioManager
+import android.content.pm.PackageManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -25,6 +27,42 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "getDeviceInfo" -> result.success(getDeviceInfo())
+                    "lowerVolume" -> {
+                        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                        val stream = AudioManager.STREAM_MUSIC
+                        val current = audio.getStreamVolume(stream)
+                        val target = (current - 2).coerceAtLeast(0)
+                        audio.setStreamVolume(stream, target, 0)
+                        result.success(mapOf("before" to current, "after" to target, "max" to audio.getStreamMaxVolume(stream)))
+                    }
+                    "getCpuUsage" -> result.success(getCpuUsage())
+                    "openApp" -> {
+                        val requested = call.argument<String>("app")?.trim().orEmpty()
+                        try {
+                            val match = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
+                                .mapNotNull { info ->
+                                    val label = packageManager.getApplicationLabel(info).toString()
+                                    if (label.equals(requested, ignoreCase = true) ||
+                                        info.packageName.equals(requested, ignoreCase = true) ||
+                                        label.contains(requested, ignoreCase = true)) Pair(label, info.packageName) else null
+                                }
+                                .sortedBy { if (it.first.equals(requested, ignoreCase = true) || it.second.equals(requested, ignoreCase = true)) 0 else 1 }
+                                .firstOrNull()
+                            if (match == null) {
+                                result.error("APP_NOT_FOUND", "No installed app matched '$requested'.", null)
+                            } else {
+                                val launch = packageManager.getLaunchIntentForPackage(match.second)
+                                if (launch == null) result.error("APP_NOT_LAUNCHABLE", "${match.first} has no launch activity.", null)
+                                else {
+                                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    startActivity(launch)
+                                    result.success(match.first)
+                                }
+                            }
+                        } catch (error: Exception) {
+                            result.error("APP_LAUNCH_FAILED", error.message, null)
+                        }
+                    }
                     "openSettings" -> {
                         val section = call.argument<String>("section") ?: "general"
                         try {
@@ -46,6 +84,21 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun getCpuUsage(): Map<String, Any?> {
+        fun readCpu(): LongArray {
+            val fields = java.io.File("/proc/stat").readLines().first().trim().split(Regex("\\s+"))
+            val values = fields.drop(1).take(8).map { it.toLongOrNull() ?: 0L }
+            return longArrayOf(values.sum(), values[3] + values[4])
+        }
+        val first = readCpu()
+        Thread.sleep(250)
+        val second = readCpu()
+        val total = second[0] - first[0]
+        val idle = second[1] - first[1]
+        val usage = if (total > 0) ((total - idle).toDouble() / total * 100).coerceIn(0.0, 100.0) else -1.0
+        return mapOf("cpuPercent" to usage)
     }
 
     private fun getDeviceInfo(): Map<String, Any?> {
