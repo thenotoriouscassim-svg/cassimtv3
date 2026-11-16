@@ -356,7 +356,7 @@ Never reveal internal model, provider, API, key, or server implementation detail
 
     async def relay_code_stream():
         try:
-            async for chunk in upstream.aiter_raw():
+            async for chunk in upstream.aiter_bytes():
                 yield chunk
         finally:
             await upstream.aclose()
