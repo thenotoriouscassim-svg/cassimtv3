@@ -38,10 +38,17 @@ jobs:
             if [ -f android/app/src/main/AndroidManifest.xml ]; then
               cp android/app/src/main/AndroidManifest.xml /tmp/jarvis-custom-manifest.xml
             fi
+            if [ -f android/app/src/main/kotlin/com/cassimtv/jarvis_ai/MainActivity.kt ]; then
+              cp android/app/src/main/kotlin/com/cassimtv/jarvis_ai/MainActivity.kt /tmp/jarvis-custom-MainActivity.kt
+            fi
             rm -rf android
             flutter create --platforms=android --org com.cassimtv --project-name jarvis_ai .
             if [ -f /tmp/jarvis-custom-manifest.xml ]; then
               cp /tmp/jarvis-custom-manifest.xml android/app/src/main/AndroidManifest.xml
+            fi
+            if [ -f /tmp/jarvis-custom-MainActivity.kt ]; then
+              mkdir -p android/app/src/main/kotlin/com/cassimtv/jarvis_ai
+              cp /tmp/jarvis-custom-MainActivity.kt android/app/src/main/kotlin/com/cassimtv/jarvis_ai/MainActivity.kt
             fi
             # Flutter's generated sample test references MyApp, but this app entry point is JarvisApp.
             rm -f test/widget_test.dart
