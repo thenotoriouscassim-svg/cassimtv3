@@ -78,7 +78,6 @@ class _CallScreenState extends State<CallScreen> {
     } catch (error) {
       _holdListening = true;
       if (mounted) setState(() => _status = 'Could not start microphone: $error');
-    }
     } finally {
       _startingListen = false;
     }
