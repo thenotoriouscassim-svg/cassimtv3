@@ -349,7 +349,7 @@ class JarvisService extends ChangeNotifier {
 
   Future<bool> _handleDeviceRequest(String text) async {
     final value = text.toLowerCase();
-    final wantsKillBackground = RegExp(r'\\b(kill|close|clear|stop)\\s+(?:all\\s+)?background\\s+(?:activity|apps?|processes?)\\b|\\b(free\\s+up|free)\\s+(?:some\\s+)?(?:ram|memory)\\b|\\bclear\\s+recent\\s+apps\\b').hasMatch(value);
+    final wantsKillBackground = RegExp(r'\b(kill|close|clear|stop)\s+(?:all\s+)?background\s+(?:activity|apps?|processes?)\b|\b(free\s+up|free)\s+(?:some\s+)?(?:ram|memory)\b|\bclear\s+recent\s+apps\b').hasMatch(value);
     if (wantsKillBackground) {
       _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
       await _killBackgroundProcesses();
