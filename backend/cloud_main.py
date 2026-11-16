@@ -337,7 +337,13 @@ Never reveal internal model, provider, API, key, or server implementation detail
             },
             json=payload,
         )
-        upstream = await client.send(request, stream=True)
+        upstream = None
+        for attempt in range(3):
+            upstream = await client.send(request, stream=True)
+            if upstream.status_code != 429 or attempt == 2:
+                break
+            await upstream.aclose()
+            await asyncio.sleep(1.5 * (attempt + 1))
         if upstream.status_code >= 400:
             status = upstream.status_code
             error_body = await upstream.aread()
