@@ -21,6 +21,8 @@ class _CallScreenState extends State<CallScreen> {
   String _heard = '';
   String _status = 'Connecting microphone...';
   Timer? _silenceTimer;
+  Timer? _restartTimer;
+  bool _startingListen = false;
   bool _holdListening = false;
 
   @override
@@ -46,24 +48,43 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _listen() async {
-    if (!_active || _busy || !_available || _speech.isListening) return;
+    if (!_active || _busy || !_available || _startingListen || _speech.isListening) return;
+    _startingListen = true;
     _holdListening = false;
     _heard = '';
-    if (mounted) setState(() => _status = 'Listening — speak now');
-    await _speech.listen(
-      onResult: (result) {
-        _heard = result.recognizedWords;
-        _armSilenceTimeout();
-        if (mounted) setState(() {});
-        if (result.finalResult) _handleTurn(_heard);
-      },
-      listenFor: const Duration(minutes: 2),
-      pauseFor: const Duration(milliseconds: 900),
-      partialResults: true,
-      cancelOnError: true,
-      listenMode: stt.ListenMode.confirmation,
-    );
-    _armSilenceTimeout();
+    if (mounted) setState(() => _status = 'Starting microphone…');
+    try {
+      await _speech.listen(
+        onResult: (result) {
+          _heard = result.recognizedWords;
+          _armSilenceTimeout();
+          if (mounted) setState(() => _status = _heard.isEmpty ? 'Listening — speak now' : 'I heard you…');
+          if (result.finalResult) _handleTurn(_heard);
+        },
+        listenFor: const Duration(minutes: 5),
+        pauseFor: const Duration(milliseconds: 1800),
+        partialResults: true,
+        cancelOnError: true,
+        listenMode: stt.ListenMode.dictation,
+      );
+      _armSilenceTimeout();
+      if (mounted && !_speech.isListening) _scheduleListenRestart();
+    } catch (error) {
+      if (mounted) setState(() => _status = 'Could not start microphone: $error');
+      _scheduleListenRestart();
+    } finally {
+      _startingListen = false;
+    }
+  }
+
+  void _scheduleListenRestart() {
+    _restartTimer?.cancel();
+    _restartTimer = Timer(const Duration(milliseconds: 700), () async {
+      if (!_active || _busy || _handlingTurn || _holdListening || !mounted) return;
+      if (_speech.isListening) return;
+      await _speech.cancel();
+      await _listen();
+    });
   }
 
   void _armSilenceTimeout() {
@@ -98,7 +119,7 @@ class _CallScreenState extends State<CallScreen> {
       if (!_handlingTurn && !_busy && _heard.trim().isNotEmpty) {
         _handleTurn(_heard);
       } else if (!_handlingTurn && !_busy) {
-        Future.delayed(const Duration(milliseconds: 350), _listen);
+        _scheduleListenRestart();
       }
     }
   }
@@ -125,6 +146,7 @@ class _CallScreenState extends State<CallScreen> {
   Future<void> _endCall() async {
     _active = false;
     _silenceTimer?.cancel();
+    _restartTimer?.cancel();
     await _speech.stop();
     if (mounted) Navigator.of(context).pop();
   }
@@ -133,6 +155,7 @@ class _CallScreenState extends State<CallScreen> {
   void dispose() {
     _active = false;
     _silenceTimer?.cancel();
+    _restartTimer?.cancel();
     _speech.cancel();
     super.dispose();
   }
