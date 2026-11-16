@@ -523,7 +523,8 @@ async def text_to_speech(req: VoiceRequest):
         "text": req.text,
         "reference_id": FISH_AUDIO_VOICE_ID,
         "format": "mp3",
-        "latency": "low",\n        "chunk_length": 100,
+        "latency": "low",
+        "chunk_length": 100,
         "prosody": {"speed": 1.00, "volume": 0},
     }
     try:
