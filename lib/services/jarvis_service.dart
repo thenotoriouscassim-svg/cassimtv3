@@ -271,24 +271,11 @@ class JarvisService extends ChangeNotifier {
   Future<void> _killBackgroundProcesses() async {
     _setStatus(JarvisState.processing, 'Checking Android system-control access…');
     try {
-      final installed = await _shizuku.isShizukuInstalled() ?? false;
-      if (!installed) {
-        _addMessage(Message(
-          role: MessageRole.assistant,
-          content: 'Sir, system-level background cleanup needs Shizuku. It is not installed on this TV box yet. Install Shizuku from https://shizuku.rikka.app/, then start its service. I will be able to request your approval before using ADB-level access.',
-          timestamp: DateTime.now(),
-          isError: true,
-        ));
-        _setState(JarvisState.standby);
-        return;
-      }
-
       final running = await _shizuku.pingBinder() ?? false;
       if (!running) {
-        await _shizuku.openShizukuApp();
         _addMessage(Message(
           role: MessageRole.assistant,
-          content: 'Shizuku is installed, but its service is not running, sir. I opened Shizuku. Start its service there, then tell me to kill background activity again.',
+          content: 'Sir, Shizuku is not running. Install Shizuku from https://shizuku.rikka.app/ if it is not installed, then start its service on this TV box. On supported Android 11+ devices, Shizuku can be started with Wireless debugging. No background processes were stopped.',
           timestamp: DateTime.now(),
           isError: true,
         ));
