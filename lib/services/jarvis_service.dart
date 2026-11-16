@@ -163,12 +163,12 @@ class JarvisService extends ChangeNotifier {
       } else {
         buffer.write('\n\nLive search was used, but the provider returned no source links.');
       }
-      _startTypingResponse();
       _addMessage(Message(
         role: MessageRole.assistant,
         content: buffer.toString(),
         timestamp: DateTime.now(),
       ));
+      _startTypingResponse();
     } catch (error) {
       _addMessage(Message(
         role: MessageRole.assistant,
@@ -288,8 +288,8 @@ class JarvisService extends ChangeNotifier {
           'Network: ${info['network']}',
           if (info['lowMemory'] == true) 'Android reports low memory at the moment.',
         ].join('\n');
-        _startTypingResponse();
         _addMessage(Message(role: MessageRole.assistant, content: answer, timestamp: DateTime.now()));
+        _startTypingResponse();
       } catch (error) {
         _addMessage(Message(role: MessageRole.assistant, content: 'I could not read device information: $error', timestamp: DateTime.now(), isError: true));
         _setState(JarvisState.standby);
@@ -359,12 +359,12 @@ class JarvisService extends ChangeNotifier {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         final answer = data['response']?.toString() ?? 'No response received, sir.';
-        _startTypingResponse();
         _addMessage(Message(
           role: MessageRole.assistant,
           content: answer,
           timestamp: DateTime.now(),
         ));
+        _startTypingResponse();
         if (speakResponse) {
           finishResponseTyping();
           await _speakResponse(answer);
