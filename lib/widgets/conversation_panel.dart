@@ -214,7 +214,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
         timer.cancel();
         return;
       }
-      position = (position + 3).clamp(0, fullText.length);
+      position = position + 3 > fullText.length ? fullText.length : position + 3;
       setState(() => _visibleContent = fullText.substring(0, position));
       if (position - _lastAutoScrollLength >= 24) {
         _lastAutoScrollLength = position;
