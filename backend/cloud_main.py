@@ -48,7 +48,7 @@ VOICE CAPABILITY:
 - You cannot inspect the phone's actual audio output or verify whether playback is working.
 - Do not claim microphone input, wake-word detection, or speech recognition is available; those features are not part of this app.
 
-You are JARVIS AI by CassimTV. Never claim access to the user's device, files, sensors, or accounts unless a connected capability actually provides it."""
+You are JARVIS AI by CassimTV. Never claim access to the user's device, files, sensors, or accounts unless a connected capability actually provides it. Never disclose or name internal AI providers, model names, APIs, backend infrastructure, or implementation details. If asked how you work, give a brief high-level answer without naming providers."""
 
 app = FastAPI(title="JARVIS AI by CassimTV", version="1.2.0-cloud")
 app.add_middleware(
@@ -76,9 +76,7 @@ async def health():
         "name": "JARVIS AI",
         "brand": "CassimTV",
         "ai_configured": bool(GEMINI_API_KEY),
-        "model": GEMINI_MODEL if GEMINI_API_KEY else None,
         "voice_configured": bool(FISH_API_KEY and FISH_AUDIO_VOICE_ID),
-        "voice_engine": "Fish Audio" if FISH_API_KEY and FISH_AUDIO_VOICE_ID else "Fish Audio not configured",
     }
 
 
@@ -297,7 +295,7 @@ async def chat(req: ChatRequest):
     if not GEMINI_API_KEY:
         raise HTTPException(
             status_code=503,
-            detail="JARVIS is online, but its AI brain is not configured. Add GEMINI_API_KEY in the hosting environment."
+            detail="JARVIS is online, but its assistant service is not configured. Please contact the administrator."
         )
 
     contents = []
@@ -334,7 +332,7 @@ async def chat(req: ChatRequest):
                     print(f"Gemini model {model_name} timed out.")
                     if model_index < len(models_to_try) - 1:
                         continue
-                    raise HTTPException(status_code=504, detail="JARVIS's Gemini models timed out. Please try again.")
+                    raise HTTPException(status_code=504, detail="JARVIS is taking too long to respond. Please try again.")
 
                 if response.status_code >= 400:
                     try:
@@ -352,7 +350,7 @@ async def chat(req: ChatRequest):
                     if is_temporary and model_index < len(models_to_try) - 1:
                         print(f"Switching JARVIS to Gemini fallback model {models_to_try[model_index + 1]}.")
                         continue
-                    raise HTTPException(status_code=502, detail=f"JARVIS AI provider error: {detail}")
+                    raise HTTPException(status_code=502, detail="JARVIS could not complete that response. Please try again.")
 
                 data = response.json()
                 candidates = data.get("candidates", [])
@@ -361,17 +359,17 @@ async def chat(req: ChatRequest):
                 if answer:
                     if model_name != GEMINI_MODEL:
                         print(f"JARVIS response successfully generated using fallback model {model_name}.")
-                    return {"response": answer, "model": model_name}
+                    return {"response": answer}
                 last_provider_error = "The AI provider returned an empty response."
                 print(f"Gemini model {model_name} returned no text: {json.dumps(data, ensure_ascii=False)[:2000]}")
                 if model_index < len(models_to_try) - 1:
                     continue
                 raise HTTPException(status_code=502, detail=last_provider_error)
-        raise HTTPException(status_code=502, detail=f"JARVIS AI provider error: {last_provider_error}")
+        raise HTTPException(status_code=502, detail="JARVIS could not complete that response. Please try again.")
     except HTTPException:
         raise
     except httpx.HTTPError:
-        raise HTTPException(status_code=502, detail="JARVIS could not reach Gemini.")
+        raise HTTPException(status_code=502, detail="JARVIS could not reach its assistant service.")
 
 class VoiceRequest(BaseModel):
     text: str = Field(min_length=1, max_length=6000)
