@@ -22,6 +22,7 @@ class _CallScreenState extends State<CallScreen> {
   String _status = 'Connecting microphone...';
   Timer? _silenceTimer;
   Timer? _restartTimer;
+  Timer? _finalizeTimer;
   bool _startingListen = false;
   bool _holdListening = false;
 
@@ -35,13 +36,25 @@ class _CallScreenState extends State<CallScreen> {
     _available = await _speech.initialize(
       onStatus: _onSpeechStatus,
       onError: (error) {
-        if (!mounted) return;
-        _startingListen = false;
-        final denied = error.errorMsg.toLowerCase().contains('permission') || error.errorMsg.toLowerCase().contains('not-allowed');
-        setState(() => _status = denied
-            ? 'Android blocked microphone access. Enable it in Settings > Apps > JARVIS AI > Permissions. If needed, ADB: pm grant com.cassimtv.jarvis_ai android.permission.RECORD_AUDIO'
-            : 'Speech recognition error: ${error.errorMsg}');
-        if (_active && !error.permanent && !_holdListening && !denied) _scheduleListenRestart();
+        if (!mounted || !_active || _holdListening || _busy || _handlingTurn) return;
+        final message = error.errorMsg.toLowerCase();
+        final denied = message.contains('permission') || message.contains('not-allowed');
+        if (denied || error.permanent) {
+          _holdListening = true;
+          _silenceTimer?.cancel();
+          setState(() => _status = denied
+              ? 'Android blocked microphone access. Enable it in Settings > Apps > JARVIS AI > Permissions. If needed, ADB: pm grant com.cassimtv.jarvis_ai android.permission.RECORD_AUDIO'
+              : 'Speech recognition unavailable: ${error.errorMsg}');
+          return;
+        }
+        // Android reports no-match/time-out when a recognition window ends.
+        // These are recoverable session events, not reasons to interrupt the call.
+        if (_heard.trim().isNotEmpty) {
+          _handleTurn(_heard.trim());
+        } else {
+          if (mounted) setState(() => _status = 'Reconnecting microphone…');
+          _scheduleListenRestart();
+        }
       },
     );
     if (!_available) {
@@ -66,10 +79,10 @@ class _CallScreenState extends State<CallScreen> {
           if (mounted) setState(() => _status = _heard.isEmpty ? 'Listening — speak now' : 'I heard you…');
           if (result.finalResult) _handleTurn(_heard);
         },
-        listenFor: const Duration(minutes: 5),
-        pauseFor: const Duration(milliseconds: 1800),
+        listenFor: const Duration(minutes: 1),
+        pauseFor: const Duration(seconds: 5),
         partialResults: true,
-        cancelOnError: true,
+        cancelOnError: false,
         listenMode: stt.ListenMode.dictation,
       );
       // The speech plugin may report isListening a moment after listen() returns.
@@ -85,10 +98,17 @@ class _CallScreenState extends State<CallScreen> {
 
   void _scheduleListenRestart() {
     _restartTimer?.cancel();
-    _restartTimer = Timer(const Duration(milliseconds: 700), () async {
-      if (!_active || _busy || _handlingTurn || _holdListening || !mounted) return;
-      if (_speech.isListening || _startingListen) return;
-      await _listen();
+    _restartTimer = Timer(const Duration(milliseconds: 900), () async {
+      if (!_active || _busy || _handlingTurn || _holdListening || !mounted || _startingListen) return;
+      // A stale isListening flag can survive an Android recognition error.
+      // Explicitly close that session before opening the next one.
+      if (_speech.isListening) {
+        await _speech.stop();
+        await Future.delayed(const Duration(milliseconds: 350));
+      }
+      if (_active && !_busy && !_handlingTurn && !_holdListening && mounted && !_startingListen) {
+        await _listen();
+      }
     });
   }
 
@@ -116,15 +136,25 @@ class _CallScreenState extends State<CallScreen> {
 
   void _onSpeechStatus(String status) {
     if (!_active || !mounted) return;
-    if (status == 'listening' && mounted) {
+    if (status == 'listening') {
+      _finalizeTimer?.cancel();
       setState(() => _status = 'Listening — speak now');
+      return;
     }
     if (status == 'done' || status == 'notListening') {
       _silenceTimer?.cancel();
       if (_holdListening || _handlingTurn || _busy) return;
       final transcript = _heard.trim();
       if (transcript.isNotEmpty) {
-        _handleTurn(transcript);
+        // Do not cut the user off on a short Android silence callback.
+        // Give a final recognition result a moment to arrive first.
+        _finalizeTimer?.cancel();
+        _finalizeTimer = Timer(const Duration(milliseconds: 900), () {
+          if (!_active || _holdListening || _busy || _handlingTurn || !mounted) return;
+          final latest = _heard.trim();
+          if (latest.isNotEmpty) _handleTurn(latest);
+          else _scheduleListenRestart();
+        });
       } else {
         _scheduleListenRestart();
       }
@@ -138,6 +168,7 @@ class _CallScreenState extends State<CallScreen> {
     _holdListening = true;
     _silenceTimer?.cancel();
     _restartTimer?.cancel();
+    _finalizeTimer?.cancel();
     await _speech.stop();
     if (mounted) setState(() => _status = 'JARVIS is thinking...');
     try {
@@ -175,6 +206,7 @@ class _CallScreenState extends State<CallScreen> {
     _active = false;
     _silenceTimer?.cancel();
     _restartTimer?.cancel();
+    _finalizeTimer?.cancel();
     _speech.cancel();
     super.dispose();
   }
