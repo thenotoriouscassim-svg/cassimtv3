@@ -266,8 +266,6 @@ class JarvisService extends ChangeNotifier {
     }
   }
 
-  Future<void> sendTextMessage(String text, {bool speakResponse = false, String memoryContext = ''}) async {
-    if (text.trim().isEmpty) return;
   Future<bool> _handleDeviceRequest(String text) async {
     final value = text.toLowerCase();
     final wantsInfo = RegExp(r'\b(device info|system info|phone info|about this phone|check my device|check my phone|device details|system details|what phone am i using|what device am i using)\b').hasMatch(value);
@@ -310,6 +308,10 @@ class JarvisService extends ChangeNotifier {
     _setState(JarvisState.standby);
     return true;
   }
+
+  Future<void> sendTextMessage(String text, {bool speakResponse = false, String memoryContext = ''}) async {
+    if (text.trim().isEmpty) return;
+    if (await _handleDeviceRequest(text.trim())) return;
 
     if (await _handleDeviceRequest(text.trim())) return;
 
