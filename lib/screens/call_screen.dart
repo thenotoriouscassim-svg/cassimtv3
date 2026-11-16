@@ -37,8 +37,11 @@ class _CallScreenState extends State<CallScreen> {
       onError: (error) {
         if (!mounted) return;
         _startingListen = false;
-        setState(() => _status = 'Speech recognition error: ${error.errorMsg}');
-        if (_active && !error.permanent && !_holdListening) _scheduleListenRestart();
+        final denied = error.errorMsg.toLowerCase().contains('permission') || error.errorMsg.toLowerCase().contains('not-allowed');
+        setState(() => _status = denied
+            ? 'Android blocked microphone access. Enable it in Settings > Apps > JARVIS AI > Permissions. If needed, ADB: pm grant com.cassimtv.jarvis_ai android.permission.RECORD_AUDIO'
+            : 'Speech recognition error: ${error.errorMsg}');
+        if (_active && !error.permanent && !_holdListening && !denied) _scheduleListenRestart();
       },
     );
     if (!_available) {
