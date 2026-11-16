@@ -97,11 +97,11 @@ class _DuckDuckGoResultsParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         classes = attrs.get("class", "").split()
-        if tag == "a" and "result__a" in classes:
+        if tag == "a" and ("result__a" in classes or "result-link" in classes):
             self._current = {"title": "", "url": attrs.get("href", ""), "snippet": ""}
             self.results.append(self._current)
             self._capture = "title"
-        elif self._current is not None and "result__snippet" in classes:
+        elif self._current is not None and ("result__snippet" in classes or "result-snippet" in classes):
             self._capture = "snippet"
 
     def handle_endtag(self, tag):
@@ -116,57 +116,79 @@ class _DuckDuckGoResultsParser(HTMLParser):
 
 
 async def _search_without_gemini(query: str):
-    """Free web-search fallback; does not consume Gemini API quota."""
-    parser = _DuckDuckGoResultsParser()
-    try:
-        async with httpx.AsyncClient(
-            timeout=25,
-            follow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; JARVISAI/1.0; +https://cassimtv3.onrender.com)"}
-        ) as client:
-            response = await client.get(
-                "https://html.duckduckgo.com/html/",
-                params={"q": query},
-            )
-        response.raise_for_status()
-        parser.feed(response.text)
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Free web search timed out. Please try again.")
-    except httpx.HTTPError:
-        raise HTTPException(status_code=502, detail="Free web search provider could not be reached.")
+    """Free web-search fallback with two DuckDuckGo endpoints and bounded retries."""
+    import asyncio
 
-    sources = []
-    seen = set()
-    for item in parser.results:
-        raw_url = item["url"].strip()
-        parsed = urlparse(raw_url)
-        if parsed.netloc.endswith("duckduckgo.com"):
-            raw_url = parse_qs(parsed.query).get("uddg", [raw_url])[0]
-        if not raw_url.startswith(("https://", "http://")) or raw_url in seen:
-            continue
-        seen.add(raw_url)
-        sources.append({
-            "title": " ".join(item["title"].split()) or raw_url,
-            "url": raw_url,
-            "snippet": " ".join(item["snippet"].split()),
-        })
-        if len(sources) >= 8:
-            break
-
-    if not sources:
-        raise HTTPException(status_code=502, detail="Free web search returned no readable results. Try rephrasing the query.")
-    lines = [f"Here is what I found about {query}:", ""]
-    for index, source in enumerate(sources, 1):
-        lines.append(f"{index}. {source['title']}")
-        if source["snippet"]:
-            lines.append(source["snippet"])
-        lines.append("")
-    return {
-        "answer": "\n".join(lines).strip(),
-        "sources": sources,
-        "search_queries": [query],
-        "provider": "DuckDuckGo HTML (free fallback)",
+    endpoints = (
+        ("https://html.duckduckgo.com/html/", "DuckDuckGo HTML"),
+        ("https://lite.duckduckgo.com/lite/", "DuckDuckGo Lite"),
+    )
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
     }
+    last_error = None
+    for endpoint, provider in endpoints:
+        for attempt in range(2):
+            parser = _DuckDuckGoResultsParser()
+            try:
+                timeout = httpx.Timeout(45.0, connect=12.0, read=35.0)
+                async with httpx.AsyncClient(
+                    timeout=timeout,
+                    follow_redirects=True,
+                    headers=headers,
+                ) as client:
+                    response = await client.get(endpoint, params={"q": query})
+                response.raise_for_status()
+                parser.feed(response.text)
+                sources = []
+                seen = set()
+                for item in parser.results:
+                    raw_url = item["url"].strip()
+                    parsed = urlparse(raw_url)
+                    if parsed.netloc.endswith("duckduckgo.com"):
+                        raw_url = parse_qs(parsed.query).get("uddg", [raw_url])[0]
+                    if not raw_url.startswith(("https://", "http://")) or raw_url in seen:
+                        continue
+                    seen.add(raw_url)
+                    sources.append({
+                        "title": " ".join(item["title"].split()) or raw_url,
+                        "url": raw_url,
+                        "snippet": " ".join(item["snippet"].split()),
+                    })
+                    if len(sources) >= 8:
+                        break
+                if sources:
+                    lines = [f"Here is what I found about {query}:", ""]
+                    for index, source in enumerate(sources, 1):
+                        lines.append(f"{index}. {source['title']}")
+                        if source["snippet"]:
+                            lines.append(source["snippet"])
+                        lines.append("")
+                    return {
+                        "answer": "\\n".join(lines).strip(),
+                        "sources": sources,
+                        "search_queries": [query],
+                        "provider": provider,
+                    }
+                last_error = "The search provider returned no readable results."
+                break
+            except httpx.TimeoutException as exc:
+                last_error = exc
+                print(f"{provider} timed out (attempt {attempt + 1}/2).")
+                if attempt == 0:
+                    await asyncio.sleep(0.8)
+            except httpx.HTTPError as exc:
+                last_error = exc
+                print(f"{provider} request failed: {exc}")
+                break
+
+    if isinstance(last_error, httpx.TimeoutException):
+        raise HTTPException(status_code=504, detail="Both free web-search routes timed out. Please try again shortly.")
+    if last_error:
+        raise HTTPException(status_code=502, detail="Free web search could not retrieve readable results. Please try again.")
+    raise HTTPException(status_code=502, detail="Free web search returned no readable results. Try rephrasing the query.")
 
 
 async def _get_weather_answer(query: str):
