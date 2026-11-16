@@ -512,7 +512,15 @@ class JarvisService extends ChangeNotifier {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({
               'message': memoryContext.trim().isEmpty ? text : '${memoryContext.trim()}\n\nCurrent user message: $text',
-              'conversation_history': history,
+              'conversation_history': speakResponse
+                  ? history.skip(history.length > 4 ? history.length - 4 : 0)
+                      .map((turn) => {
+                        'role': turn['role']!,
+                        'content': (turn['content'] ?? '').substring(
+                          0, (turn['content'] ?? '').length > 1500 ? 1500 : (turn['content'] ?? '').length),
+                      }).toList()
+                  : history,
+              'voice_mode': speakResponse,
             }),
           )
           .timeout(const Duration(seconds: 270));
