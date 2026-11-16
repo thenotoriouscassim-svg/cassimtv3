@@ -208,8 +208,9 @@ class JarvisService extends ChangeNotifier {
   }
 
   void _startTypingResponse() {
+    // Animate the arriving answer without showing a fake thinking/loading state.
     _typingResponse = true;
-    _setStatus(JarvisState.processing, 'Writing response…');
+    notifyListeners();
   }
 
   void finishResponseTyping() {
@@ -416,7 +417,7 @@ class JarvisService extends ChangeNotifier {
       content: text,
       timestamp: DateTime.now(),
     ));
-    _setStatus(JarvisState.processing, 'Thinking with Gemini…');
+    // Ordinary chat stays visually quiet; no thinking/provider indicator.
 
     try {
       final response = await http
