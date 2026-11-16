@@ -320,7 +320,8 @@ class JarvisService extends ChangeNotifier {
       if (!result.contains('JARVIS_BACKGROUND_CLEANUP_COMPLETE')) {
         throw Exception(result.isEmpty ? 'Android did not confirm the cleanup command.' : result);
       }
-      final memoryLine = result.split('\\n').where((line) => line.startsWith('MemAvailable:')).firstOrNull;
+      final memoryLines = result.split('\\n').where((line) => line.startsWith('MemAvailable:')).toList();
+      final memoryLine = memoryLines.isEmpty ? null : memoryLines.first;
       var memoryText = '';
       if (memoryLine != null) {
         final match = RegExp(r'MemAvailable:\\s+(\\d+)\\s+kB').firstMatch(memoryLine);
