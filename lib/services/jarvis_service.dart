@@ -393,6 +393,76 @@ class JarvisService extends ChangeNotifier {
         RegExp(r'\b(code this|write code|let us code|let\x27s code|start coding|fix this code|debug this)\b').hasMatch(value);
   }
 
+  Future<void> _sendCodingRequestStream(String text, List<Map<String, String>> history, String memoryContext, {bool speakResponse = false}) async {
+    final client = http.Client();
+    final placeholder = Message(role: MessageRole.assistant, content: '', timestamp: DateTime.now());
+    _addMessage(placeholder);
+    final messageIndex = _conversation.length - 1;
+    final fullPrompt = memoryContext.trim().isEmpty
+        ? text
+        : '${memoryContext.trim()}\\n\\nCurrent user message: $text';
+    try {
+      final request = http.Request('POST', Uri.parse('$_backendUrl/code'))
+        ..headers['Content-Type'] = 'application/json'
+        ..body = jsonEncode({
+          'message': fullPrompt,
+          'conversation_history': history,
+        });
+      final streamed = await client.send(request).timeout(const Duration(seconds: 150));
+      if (streamed.statusCode != 200) {
+        final body = await streamed.stream.bytesToString();
+        var detail = 'The coding service returned HTTP ${streamed.statusCode}.';
+        try {
+          detail = (jsonDecode(body) as Map<String, dynamic>)['detail']?.toString() ?? detail;
+        } catch (_) {}
+        throw Exception(detail);
+      }
+
+      final buffer = StringBuffer();
+      await for (final line in utf8.decoder.bind(streamed.stream).transform(const LineSplitter())) {
+        if (!line.startsWith('data:')) continue;
+        final payload = line.substring(5).trim();
+        if (payload.isEmpty || payload == '[DONE]') continue;
+        final event = jsonDecode(payload) as Map<String, dynamic>;
+        final choices = event['choices'] as List<dynamic>? ?? [];
+        if (choices.isEmpty) continue;
+        final delta = (choices.first as Map<String, dynamic>)['delta'] as Map<String, dynamic>? ?? {};
+        final chunk = delta['content']?.toString() ?? '';
+        if (chunk.isEmpty) continue;
+        buffer.write(chunk);
+        _replaceMessageContent(messageIndex, buffer.toString());
+      }
+
+      final answer = buffer.toString().trim();
+      if (answer.isEmpty) throw Exception('The coding service returned an empty answer.');
+      _replaceMessageContent(messageIndex, answer);
+      await _persistChats();
+      if (speakResponse) await _speakResponse(answer);
+    } catch (error) {
+      _replaceMessageContent(
+        messageIndex,
+        'I could not complete that coding request: ${error.toString().replaceFirst('Exception: ', '')}',
+        isError: true,
+      );
+      await _persistChats();
+    } finally {
+      client.close();
+      _setState(JarvisState.standby);
+    }
+  }
+
+  void _replaceMessageContent(int index, String content, {bool isError = false}) {
+    if (index < 0 || index >= _conversation.length) return;
+    final old = _conversation[index];
+    _conversation[index] = Message(
+      role: old.role,
+      content: content,
+      timestamp: old.timestamp,
+      isError: isError,
+    );
+    notifyListeners();
+  }
+
   Future<void> sendTextMessage(String text, {bool speakResponse = false, String memoryContext = ''}) async {
     if (text.trim().isEmpty) return;
     if (await _handleDeviceRequest(text.trim())) return;
@@ -428,18 +498,22 @@ class JarvisService extends ChangeNotifier {
       timestamp: DateTime.now(),
     ));
     // Ordinary chat stays visually quiet; no thinking/provider indicator.
+    if (codingRequest) {
+      await _sendCodingRequestStream(text, history, memoryContext, speakResponse: speakResponse);
+      return;
+    }
 
     try {
       final response = await http
           .post(
-            Uri.parse('$_backendUrl/${codingRequest ? 'code' : 'chat'}'),
+            Uri.parse('$_backendUrl/chat'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({
               'message': memoryContext.trim().isEmpty ? text : '${memoryContext.trim()}\n\nCurrent user message: $text',
               'conversation_history': history,
             }),
           )
-          .timeout(Duration(seconds: codingRequest ? 150 : 270));
+          .timeout(const Duration(seconds: 270));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -449,7 +523,7 @@ class JarvisService extends ChangeNotifier {
           content: answer,
           timestamp: DateTime.now(),
         ));
-        if (!codingRequest) _startTypingResponse();
+        _startTypingResponse();
         if (speakResponse) {
           finishResponseTyping();
           await _speakResponse(answer);
@@ -460,9 +534,6 @@ class JarvisService extends ChangeNotifier {
           detail = (jsonDecode(response.body) as Map<String, dynamic>)['detail']
                   ?.toString() ??
               detail;
-          if (codingRequest && response.statusCode == 503) {
-            detail = 'The coding service is not configured yet. Add the coding API key to the server settings.';
-          }
         } catch (_) {}
         _addMessage(Message(
           role: MessageRole.assistant,
