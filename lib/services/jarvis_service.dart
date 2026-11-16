@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:shizuku_api/shizuku_api.dart';
 import 'package:http/http.dart' as http;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -19,6 +20,7 @@ class JarvisService extends ChangeNotifier {
   bool _isConnected = false;
   bool _typingResponse = false;
   static const MethodChannel _deviceChannel = MethodChannel('jarvis/device');
+  final ShizukuApi _shizuku = ShizukuApi();
   Timer? _statsTimer;
   final AudioPlayer _ttsPlayer = AudioPlayer();
   String _backendUrl = JarvisStrings.backendUrl;
@@ -266,8 +268,92 @@ class JarvisService extends ChangeNotifier {
     }
   }
 
+  Future<void> _killBackgroundProcesses() async {
+    _setStatus(JarvisState.processing, 'Checking Android system-control access…');
+    try {
+      final installed = await _shizuku.isShizukuInstalled() ?? false;
+      if (!installed) {
+        _addMessage(Message(
+          role: MessageRole.assistant,
+          content: 'Sir, system-level background cleanup needs Shizuku. It is not installed on this TV box yet. Install Shizuku from https://shizuku.rikka.app/, then start its service. I will be able to request your approval before using ADB-level access.',
+          timestamp: DateTime.now(),
+          isError: true,
+        ));
+        _setState(JarvisState.standby);
+        return;
+      }
+
+      final running = await _shizuku.pingBinder() ?? false;
+      if (!running) {
+        await _shizuku.openShizukuApp();
+        _addMessage(Message(
+          role: MessageRole.assistant,
+          content: 'Shizuku is installed, but its service is not running, sir. I opened Shizuku. Start its service there, then tell me to kill background activity again.',
+          timestamp: DateTime.now(),
+          isError: true,
+        ));
+        _setState(JarvisState.standby);
+        return;
+      }
+
+      var permitted = await _shizuku.checkPermission() ?? false;
+      if (!permitted) {
+        _setStatus(JarvisState.processing, 'Requesting permission for Android system control…');
+        permitted = await _shizuku.requestPermission() ?? false;
+      }
+      if (!permitted) {
+        _addMessage(Message(
+          role: MessageRole.assistant,
+          content: 'I do not have Shizuku permission, sir. No background processes were stopped. Grant JARVIS permission in Shizuku and try again.',
+          timestamp: DateTime.now(),
+          isError: true,
+        ));
+        _setState(JarvisState.standby);
+        return;
+      }
+
+      _setStatus(JarvisState.processing, 'Terminating eligible background processes…');
+      final output = await _shizuku.runCommand(
+        'am kill-all && echo JARVIS_BACKGROUND_CLEANUP_COMPLETE && grep MemAvailable /proc/meminfo',
+      );
+      final result = output?.trim() ?? '';
+      if (!result.contains('JARVIS_BACKGROUND_CLEANUP_COMPLETE')) {
+        throw Exception(result.isEmpty ? 'Android did not confirm the cleanup command.' : result);
+      }
+      final memoryLine = result.split('\\n').where((line) => line.startsWith('MemAvailable:')).firstOrNull;
+      var memoryText = '';
+      if (memoryLine != null) {
+        final match = RegExp(r'MemAvailable:\\s+(\\d+)\\s+kB').firstMatch(memoryLine);
+        if (match != null) {
+          final mb = (int.parse(match.group(1)!) / 1024).round();
+          memoryText = '\\nAvailable memory after cleanup: $mb MB.';
+        }
+      }
+      _addMessage(Message(
+        role: MessageRole.assistant,
+        content: 'On it, sir. Android confirmed that eligible background processes were terminated.$memoryText\\nApps and system services may automatically restart when needed.',
+        timestamp: DateTime.now(),
+      ));
+      _setState(JarvisState.standby);
+    } catch (error) {
+      _addMessage(Message(
+        role: MessageRole.assistant,
+        content: 'I could not complete background cleanup. Android reported: $error',
+        timestamp: DateTime.now(),
+        isError: true,
+      ));
+      _setState(JarvisState.standby);
+    }
+  }
+
   Future<bool> _handleDeviceRequest(String text) async {
     final value = text.toLowerCase();
+    final wantsKillBackground = RegExp(r'\\b(kill|close|clear|stop)\\s+(?:all\\s+)?background\\s+(?:activity|apps?|processes?)\\b|\\b(free\\s+up|free)\\s+(?:some\\s+)?(?:ram|memory)\\b|\\bclear\\s+recent\\s+apps\\b').hasMatch(value);
+    if (wantsKillBackground) {
+      _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
+      await _killBackgroundProcesses();
+      return true;
+    }
     final wantsInfo = RegExp(r'\b(device info|system info|phone info|about this phone|check my device|check my phone|device details|system details|what phone am i using|what device am i using|battery(?: level| percentage| status)?|how much battery|storage(?: space| status)?|free storage|available storage|ram usage|memory usage|android version|phone model|device model)\b').hasMatch(value);
     final settingsMatch = RegExp(r'\b(open|show)\s+(?:the\s+)?(wi-?fi|network|bluetooth|display|screen|sound|audio|battery|apps|applications|system)?\s*settings\b').firstMatch(value);
     if (!wantsInfo && settingsMatch == null) return false;
