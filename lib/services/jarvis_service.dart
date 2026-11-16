@@ -336,17 +336,69 @@ class JarvisService extends ChangeNotifier {
   }
 
   Future<bool> _handleDeviceRequest(String text) async {
-    final value = text.toLowerCase();
-    final wantsKillBackground = RegExp(r'\b(kill|close|clear|stop)\s+(?:all\s+)?background\s+(?:activity|apps?|processes?)\b|\b(free\s+up|free)\s+(?:some\s+)?(?:ram|memory)\b|\bclear\s+recent\s+apps\b').hasMatch(value);
+    final value = text.toLowerCase().trim();
+    final appMatch = RegExp(r'^(?:please\\s+)?(?:open|launch|start)\\s+(.+?)\\s*$').firstMatch(text.trim());
+    final wantsKillBackground = RegExp(r'\\b(kill|close|clear|stop)\\s+(?:all\\s+)?background\\s+(?:activity|apps?|processes?)\\b|\\b(free\\s+up|free)\\s+(?:some\\s+)?(?:ram|memory)\\b|\\bclear recent apps\\b').hasMatch(value);
     if (wantsKillBackground) {
       _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
       await _killBackgroundProcesses();
       return true;
     }
-    final wantsInfo = RegExp(r'\b(device info|system info|phone info|about this phone|check my device|check my phone|device details|system details|what phone am i using|what device am i using|battery(?: level| percentage| status)?|how much battery|storage(?: space| status)?|free storage|available storage|ram usage|memory usage|android version|phone model|device model)\b').hasMatch(value);
-    final settingsMatch = RegExp(r'\b(open|show)\s+(?:the\s+)?(wi-?fi|network|bluetooth|display|screen|sound|audio|battery|apps|applications|system)?\s*settings\b').firstMatch(value);
+    final wantsLowerVolume = RegExp(r'\\b(lower|decrease|turn down|reduce)\\s+(?:the\\s+)?volume\\b').hasMatch(value);
+    final wantsCpu = RegExp(r'\\b(cpu|processor)\\s+(?:usage|load|percentage)\\b|\\bcheck cpu\\b').hasMatch(value);
+    final wantsBatteryApps = RegExp(r'\\b(which|what) apps? .*battery|\\bbattery drain(?:ing)? apps?\\b|\\bapps? .*draining.*battery\\b').hasMatch(value);
+    final wantsInfo = RegExp(r'\\b(device info|system info|phone info|about this phone|check my device|check my phone|device details|system details|what phone am i using|what device am i using|battery(?: level| percentage| status)?|how much battery|storage(?: space| status)?|free storage|available storage|ram usage|memory usage|android version|phone model|device model)\\b').hasMatch(value);
+    final settingsMatch = RegExp(r'\\b(open|show)\\s+(?:the\\s+)?(wi-?fi|network|bluetooth|display|screen|sound|audio|battery|apps|applications|system)?\\s*settings\\b').firstMatch(value);
+    if (appMatch != null && !RegExp(r'\\b(settings|battery usage|battery stats)\\b').hasMatch(value)) {
+      _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
+      _setStatus(JarvisState.processing, 'Opening ${appMatch.group(1)}…');
+      try {
+        final opened = await _deviceChannel.invokeMethod<String>('openApp', {'app': appMatch.group(1)!.trim()});
+        _addMessage(Message(role: MessageRole.assistant, content: 'Opening $opened, sir.', timestamp: DateTime.now()));
+      } catch (error) {
+        _addMessage(Message(role: MessageRole.assistant, content: 'I could not open that app: $error', timestamp: DateTime.now(), isError: true));
+      }
+      _setState(JarvisState.standby);
+      return true;
+    }
+    if (wantsLowerVolume) {
+      _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
+      try {
+        final result = await _deviceChannel.invokeMapMethod<String, dynamic>('lowerVolume');
+        if (result == null) throw Exception('Android did not return the volume level.');
+        _addMessage(Message(role: MessageRole.assistant, content: 'Volume lowered from ${result['before']} to ${result['after']} of ${result['max']}, sir.', timestamp: DateTime.now()));
+      } catch (error) {
+        _addMessage(Message(role: MessageRole.assistant, content: 'I could not change the volume: $error', timestamp: DateTime.now(), isError: true));
+      }
+      _setState(JarvisState.standby);
+      return true;
+    }
+    if (wantsCpu) {
+      _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
+      _setStatus(JarvisState.processing, 'Measuring CPU usage…');
+      try {
+        final result = await _deviceChannel.invokeMapMethod<String, dynamic>('getCpuUsage');
+        final cpu = (result?['cpuPercent'] as num?)?.toDouble() ?? -1;
+        final answer = cpu < 0 ? 'CPU usage is unavailable on this Android build.' : 'Current CPU usage is ${cpu.toStringAsFixed(1)}%.';
+        _addMessage(Message(role: MessageRole.assistant, content: answer, timestamp: DateTime.now()));
+      } catch (error) {
+        _addMessage(Message(role: MessageRole.assistant, content: 'I could not read CPU usage: $error', timestamp: DateTime.now(), isError: true));
+      }
+      _setState(JarvisState.standby);
+      return true;
+    }
+    if (wantsBatteryApps) {
+      _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
+      try {
+        await _deviceChannel.invokeMethod<bool>('openSettings', {'section': 'battery'});
+        _addMessage(Message(role: MessageRole.assistant, content: 'Android battery usage is open, sir. Check the app list there for system-reported battery consumption. Android 14 does not let ordinary apps read precise per-app battery percentages directly, so I will not invent figures.', timestamp: DateTime.now()));
+      } catch (error) {
+        _addMessage(Message(role: MessageRole.assistant, content: 'I could not open Android battery usage: $error', timestamp: DateTime.now(), isError: true));
+      }
+      _setState(JarvisState.standby);
+      return true;
+    }
     if (!wantsInfo && settingsMatch == null) return false;
-
     _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
     if (wantsInfo) {
       _setStatus(JarvisState.processing, 'Reading device and system information…');
@@ -362,7 +414,7 @@ class JarvisService extends ChangeNotifier {
           'Battery: ${battery < 0 ? 'Unavailable' : '$battery%'}${info['charging'] == true ? ' (charging)' : ''}',
           'Network: ${info['network']}',
           if (info['lowMemory'] == true) 'Android reports low memory at the moment.',
-        ].join('\n');
+        ].join('\\n');
         _addMessage(Message(role: MessageRole.assistant, content: answer, timestamp: DateTime.now()));
         _startTypingResponse();
       } catch (error) {
@@ -371,7 +423,6 @@ class JarvisService extends ChangeNotifier {
       }
       return true;
     }
-
     final section = settingsMatch?.group(2)?.toLowerCase() ?? 'general';
     _setStatus(JarvisState.processing, 'Opening Android $section settings…');
     try {
