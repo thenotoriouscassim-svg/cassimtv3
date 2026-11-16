@@ -122,42 +122,49 @@ class _DuckDuckGoResultsParser(HTMLParser):
 
 
 async def _search_without_gemini(query: str):
-    """Free web-search fallback with two DuckDuckGo endpoints and bounded retries."""
+    """Search several independent public indexes; avoid relying on DuckDuckGo alone."""
     import asyncio
+    import xml.etree.ElementTree as ET
 
-    endpoints = (
-        ("https://html.duckduckgo.com/html/", "DuckDuckGo HTML"),
-        ("https://lite.duckduckgo.com/lite/", "DuckDuckGo Lite"),
-    )
     headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/rss+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }
-    last_error = None
-    for endpoint, provider in endpoints:
-        for attempt in range(2):
-            parser = _DuckDuckGoResultsParser()
-            try:
-                timeout = httpx.Timeout(30.0, connect=8.0, read=22.0)
-                async with httpx.AsyncClient(
-                    timeout=timeout,
-                    follow_redirects=True,
-                    headers=headers,
-                ) as client:
-                    response = await client.get(endpoint, params={"q": query})
-                response.raise_for_status()
+    providers = [
+        ("Bing News/Web RSS", "https://www.bing.com/search", "rss"),
+        ("Yahoo Search", "https://search.yahoo.com/search", "html"),
+        ("DuckDuckGo HTML", "https://html.duckduckgo.com/html/", "html"),
+        ("DuckDuckGo Lite", "https://lite.duckduckgo.com/lite/", "html"),
+    ]
+    failures = []
+
+    for provider, endpoint, mode in providers:
+        try:
+            timeout = httpx.Timeout(14.0, connect=5.0, read=9.0, write=5.0, pool=5.0)
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
+                response = await client.get(endpoint, params={"q": query, "p": query} if "yahoo" in endpoint else {"q": query})
+            response.raise_for_status()
+            sources = []
+
+            if mode == "rss":
+                root = ET.fromstring(response.content)
+                for item in root.findall(".//item")[:8]:
+                    title = (item.findtext("title") or "").strip()
+                    url = (item.findtext("link") or "").strip()
+                    snippet = (item.findtext("description") or "").strip()
+                    if url.startswith(("https://", "http://")):
+                        sources.append({"title": title or url, "url": url, "snippet": snippet})
+            else:
+                parser = _DuckDuckGoResultsParser()
                 parser.feed(response.text)
-                sources = []
-                seen = set()
                 for item in parser.results:
                     raw_url = item["url"].strip()
                     parsed = urlparse(raw_url)
                     if parsed.netloc.endswith("duckduckgo.com"):
                         raw_url = parse_qs(parsed.query).get("uddg", [raw_url])[0]
-                    if not raw_url.startswith(("https://", "http://")) or raw_url in seen:
+                    if not raw_url.startswith(("https://", "http://")):
                         continue
-                    seen.add(raw_url)
                     sources.append({
                         "title": " ".join(item["title"].split()) or raw_url,
                         "url": raw_url,
@@ -165,36 +172,67 @@ async def _search_without_gemini(query: str):
                     })
                     if len(sources) >= 8:
                         break
-                if sources:
-                    lines = [f"Here is what I found about {query}:", ""]
-                    for index, source in enumerate(sources, 1):
-                        lines.append(f"{index}. {source['title']}")
-                        if source["snippet"]:
-                            lines.append(source["snippet"])
-                        lines.append("")
-                    return {
-                        "answer": "\n".join(lines).strip(),
-                        "sources": sources,
-                        "search_queries": [query],
-                        "provider": provider,
-                    }
-                last_error = "The search provider returned no readable results."
-                break
-            except httpx.TimeoutException as exc:
-                last_error = exc
-                print(f"{provider} timed out (attempt {attempt + 1}/2).")
-                if attempt == 0:
-                    await asyncio.sleep(0.8)
-            except httpx.HTTPError as exc:
-                last_error = exc
-                print(f"{provider} request failed: {exc}")
-                break
 
-    if isinstance(last_error, httpx.TimeoutException):
-        raise HTTPException(status_code=504, detail="Both free web-search routes timed out. Please try again shortly.")
-    if last_error:
-        raise HTTPException(status_code=502, detail="Free web search could not retrieve readable results. Please try again.")
-    raise HTTPException(status_code=502, detail="Free web search returned no readable results. Try rephrasing the query.")
+            unique = []
+            seen = set()
+            for source in sources:
+                if source["url"] not in seen:
+                    seen.add(source["url"])
+                    unique.append(source)
+                if len(unique) >= 8:
+                    break
+
+            if unique:
+                lines = [f"Here is what I found about {query}:", ""]
+                for index, source in enumerate(unique, 1):
+                    lines.append(f"{index}. {source['title']}")
+                    if source["snippet"]:
+                        lines.append(source["snippet"])
+                    lines.append("")
+                return {
+                    "answer": "\\n".join(lines).strip(),
+                    "sources": unique,
+                    "search_queries": [query],
+                    "provider": provider,
+                }
+            failures.append(f"{provider}: no parseable results")
+        except (httpx.HTTPError, ET.ParseError, ValueError) as exc:
+            failures.append(f"{provider}: {type(exc).__name__}")
+            print(f"Search provider {provider} failed: {exc}")
+
+    # Last-chance structured encyclopedia search. This is still a real
+    # live index request, but results are labelled as Wikipedia sources.
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=4.0), follow_redirects=True, headers=headers) as client:
+            response = await client.get(
+                "https://en.wikipedia.org/w/api.php",
+                params={"action": "query", "list": "search", "srsearch": query, "srlimit": 8, "format": "json"},
+            )
+        response.raise_for_status()
+        items = response.json().get("query", {}).get("search", [])
+        sources = [{
+            "title": item.get("title", "Wikipedia result"),
+            "url": "https://en.wikipedia.org/wiki/" + item.get("title", "").replace(" ", "_"),
+            "snippet": re.sub(r"<[^>]+>", "", item.get("snippet", "")),
+        } for item in items if item.get("title")]
+        if sources:
+            return {
+                "answer": "\\n".join(
+                    [f"Live search results for {query} (Wikipedia index):"] +
+                    [f"{i}. {x['title']}\\n{x['snippet']}\\n{x['url']}" for i, x in enumerate(sources, 1)]
+                ),
+                "sources": sources,
+                "search_queries": [query],
+                "provider": "Wikipedia Search",
+            }
+    except (httpx.HTTPError, ValueError) as exc:
+        failures.append(f"Wikipedia: {type(exc).__name__}")
+        print(f"Wikipedia fallback failed: {exc}")
+
+    raise HTTPException(
+        status_code=502,
+        detail="Live search providers are temporarily unreachable. Please retry in a moment."
+    )
 
 
 async def _get_weather_answer(query: str):
@@ -251,7 +289,7 @@ async def live_search(req: SearchRequest):
         }
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
         try:
-            async with httpx.AsyncClient(timeout=75) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=8.0, read=22.0)) as client:
                 response = await client.post(url, params={"key": GEMINI_API_KEY}, json=payload)
             if response.status_code >= 400:
                 try:
