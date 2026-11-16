@@ -340,9 +340,22 @@ Never reveal internal model, provider, API, key, or server implementation detail
         upstream = await client.send(request, stream=True)
         if upstream.status_code >= 400:
             status = upstream.status_code
+            error_body = await upstream.aread()
+            provider_code = "unknown"
+            provider_message = "No error message returned"
+            try:
+                error_data = json.loads(error_body.decode("utf-8", errors="replace"))
+                provider_error = error_data.get("error", error_data)
+                if isinstance(provider_error, dict):
+                    provider_code = str(provider_error.get("code", provider_error.get("type", "unknown")))[:80]
+                    provider_message = str(provider_error.get("message", provider_error.get("detail", provider_error)))[:300]
+            except (ValueError, TypeError):
+                provider_message = error_body.decode("utf-8", errors="replace")[:300] or provider_message
             await upstream.aclose()
             await client.aclose()
-            print("Coding service request failed with HTTP {}.".format(status))
+            print("Coding provider rejected request: HTTP {} code={} message={}".format(
+                status, provider_code, provider_message
+            ))
             raise HTTPException(
                 status_code=502,
                 detail="The coding service could not complete that request. Please try again."
