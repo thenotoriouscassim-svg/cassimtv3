@@ -133,7 +133,7 @@ async def _search_without_gemini(query: str):
         for attempt in range(2):
             parser = _DuckDuckGoResultsParser()
             try:
-                timeout = httpx.Timeout(45.0, connect=12.0, read=35.0)
+                timeout = httpx.Timeout(30.0, connect=8.0, read=22.0)
                 async with httpx.AsyncClient(
                     timeout=timeout,
                     follow_redirects=True,
@@ -167,7 +167,7 @@ async def _search_without_gemini(query: str):
                             lines.append(source["snippet"])
                         lines.append("")
                     return {
-                        "answer": "\\n".join(lines).strip(),
+                        "answer": "\n".join(lines).strip(),
                         "sources": sources,
                         "search_queries": [query],
                         "provider": provider,
