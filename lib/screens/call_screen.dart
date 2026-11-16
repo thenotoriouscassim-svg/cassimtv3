@@ -20,6 +20,7 @@ class _CallScreenState extends State<CallScreen> {
   bool _handlingTurn = false;
   String _heard = '';
   String _status = 'Connecting microphone...';
+  Timer? _silenceTimer;
 
   @override
   void initState() {
@@ -39,17 +40,18 @@ class _CallScreenState extends State<CallScreen> {
       if (mounted) setState(() => _status = 'Speech recognition unavailable. Check microphone permission and Google speech services.');
       return;
     }
-    if (mounted) setState(() { _active = true; _status = 'Listening...'; });
+    if (mounted) setState(() { _active = true; _status = 'Listening — speak now'; });
     await _listen();
   }
 
   Future<void> _listen() async {
     if (!_active || _busy || !_available || _speech.isListening) return;
     _heard = '';
-    if (mounted) setState(() => _status = 'Listening...');
+    if (mounted) setState(() => _status = 'Listening — speak now');
     await _speech.listen(
       onResult: (result) {
         _heard = result.recognizedWords;
+        _armSilenceTimeout();
         if (mounted) setState(() {});
         if (result.finalResult) _handleTurn(_heard);
       },
@@ -59,10 +61,33 @@ class _CallScreenState extends State<CallScreen> {
       cancelOnError: true,
       listenMode: stt.ListenMode.confirmation,
     );
+    _armSilenceTimeout();
+  }
+
+  void _armSilenceTimeout() {
+    _silenceTimer?.cancel();
+    _silenceTimer = Timer(const Duration(seconds: 25), () async {
+      if (!_active || _busy || _handlingTurn || !_speech.isListening || _heard.trim().isNotEmpty) return;
+      await _speech.stop();
+      if (mounted) setState(() => _status = 'No speech detected. Tap the mic to try again.');
+    });
+  }
+
+  Future<void> _toggleListening() async {
+    if (_speech.isListening) {
+      _silenceTimer?.cancel();
+      await _speech.stop();
+      if (mounted) setState(() => _status = 'Microphone paused. Tap to resume.');
+    } else {
+      await _listen();
+    }
   }
 
   void _onSpeechStatus(String status) {
     if (!_active || !mounted) return;
+    if (status == 'listening' && mounted) {
+      setState(() => _status = 'Listening — speak now');
+    }
     if (status == 'done' || status == 'notListening') {
       if (!_handlingTurn && !_busy && _heard.trim().isNotEmpty) {
         _handleTurn(_heard);
@@ -93,6 +118,7 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _endCall() async {
     _active = false;
+    _silenceTimer?.cancel();
     await _speech.stop();
     if (mounted) Navigator.of(context).pop();
   }
@@ -100,6 +126,7 @@ class _CallScreenState extends State<CallScreen> {
   @override
   void dispose() {
     _active = false;
+    _silenceTimer?.cancel();
     _speech.cancel();
     super.dispose();
   }
@@ -153,7 +180,7 @@ class _CallScreenState extends State<CallScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   IconButton(
-                    onPressed: () => _speech.isListening ? _speech.stop() : _listen(),
+                    onPressed: _toggleListening,
                     icon: Icon(_speech.isListening ? Icons.mic_off : Icons.mic, color: JarvisColors.cyan, size: 28),
                     style: IconButton.styleFrom(backgroundColor: JarvisColors.surfaceLight, padding: const EdgeInsets.all(18)),
                   ),
