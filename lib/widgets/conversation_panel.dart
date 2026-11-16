@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
@@ -67,9 +68,9 @@ class _ConversationPanelState extends State<ConversationPanel> {
               child: ListView.builder(
                 controller: _scroll,
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                itemCount: msgs.length + (jarvis.state == JarvisState.processing ? 1 : 0),
+                itemCount: msgs.length + (jarvis.state == JarvisState.processing && !jarvis.isTypingResponse ? 1 : 0),
                 itemBuilder: (_, i) {
-                  if (i < msgs.length) return _MessageBubble(message: msgs[i]);
+                  if (i < msgs.length) return _MessageBubble(message: msgs[i], animate: jarvis.isTypingResponse && i == msgs.length - 1);
                   return const _ThinkingIndicator();
                 },
               ),
@@ -142,7 +143,7 @@ class _ThinkingIndicator extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                'GEMINI IS THINKING…',
+                context.watch<JarvisService>().statusText.toUpperCase(),
                 style: TextStyle(
                   color: JarvisColors.textSecondary,
                   fontSize: 10,
@@ -169,7 +170,8 @@ class _ThinkingIndicator extends StatelessWidget {
 
 class _MessageBubble extends StatefulWidget {
   final Message message;
-  const _MessageBubble({required this.message});
+  final bool animate;
+  const _MessageBubble({required this.message, this.animate = false});
 
   @override
   State<_MessageBubble> createState() => _MessageBubbleState();
@@ -177,9 +179,58 @@ class _MessageBubble extends StatefulWidget {
 
 class _MessageBubbleState extends State<_MessageBubble> {
   final List<TapGestureRecognizer> _linkRecognizers = [];
+  Timer? _typingTimer;
+  String _visibleContent = '';
+  int _lastAutoScrollLength = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _visibleContent = widget.animate ? '' : widget.message.content;
+    if (widget.animate) _startTyping();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MessageBubble oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.message.content != oldWidget.message.content) {
+      _typingTimer?.cancel();
+      _visibleContent = widget.animate ? '' : widget.message.content;
+      if (widget.animate) _startTyping();
+    } else if (widget.animate && !oldWidget.animate && _typingTimer == null) {
+      _visibleContent = '';
+      _startTyping();
+    } else if (!widget.animate && oldWidget.animate && _typingTimer == null) {
+      _visibleContent = widget.message.content;
+    }
+  }
+
+  void _startTyping() {
+    var position = 0;
+    final fullText = widget.message.content;
+    _typingTimer?.cancel();
+    _typingTimer = Timer.periodic(const Duration(milliseconds: 18), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      position = (position + 4).clamp(0, fullText.length);
+      setState(() => _visibleContent = fullText.substring(0, position));
+      if (position - _lastAutoScrollLength >= 24) {
+        _lastAutoScrollLength = position;
+        Scrollable.ensureVisible(context, duration: const Duration(milliseconds: 45), alignment: 1.0);
+      }
+      if (position >= fullText.length) {
+        timer.cancel();
+        _typingTimer = null;
+        context.read<JarvisService>().finishResponseTyping();
+      }
+    });
+  }
 
   @override
   void dispose() {
+    _typingTimer?.cancel();
     for (final recognizer in _linkRecognizers) {
       recognizer.dispose();
     }
@@ -286,6 +337,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
   @override
   Widget build(BuildContext context) {
     final message = widget.message;
+    final visibleContent = _visibleContent;
     final isUser = message.role == MessageRole.user;
     final isAssistant = message.role == MessageRole.assistant;
 
@@ -335,7 +387,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                         : null,
                   ),
                   child: _messageBody(
-                    message.content,
+                    visibleContent,
                     TextStyle(
                       color: message.isError ? JarvisColors.red : JarvisColors.textPrimary,
                       fontSize: 13,
