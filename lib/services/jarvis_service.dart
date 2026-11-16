@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,6 +17,8 @@ class JarvisService extends ChangeNotifier {
   SystemStats _systemStats = SystemStats.empty();
   String _statusText = JarvisStrings.standby;
   bool _isConnected = false;
+  bool _typingResponse = false;
+  static const MethodChannel _deviceChannel = MethodChannel('jarvis/device');
   Timer? _statsTimer;
   final AudioPlayer _ttsPlayer = AudioPlayer();
   String _backendUrl = JarvisStrings.backendUrl;
@@ -30,6 +33,7 @@ class JarvisService extends ChangeNotifier {
   SystemStats get systemStats => _systemStats;
   String get statusText => _statusText;
   bool get isConnected => _isConnected;
+  bool get isTypingResponse => _typingResponse;
 
   JarvisService() {
     _initialize();
@@ -57,20 +61,17 @@ class JarvisService extends ChangeNotifier {
       try {
         final decoded = jsonDecode(raw) as List<dynamic>;
         _chatSessions.addAll(decoded.whereType<Map>().map((e) => Map<String, dynamic>.from(e)));
-      } catch (_) { _chatSessions.clear(); }
+      } catch (_) {
+        _chatSessions.clear();
+      }
     }
-    if (_chatSessions.isEmpty) {
-      _activeChatId = DateTime.now().microsecondsSinceEpoch.toString();
-      _chatSessions.add({'id': _activeChatId, 'title': 'New chat', 'messages': <dynamic>[]});
-      await _persistChats();
-    } else {
-      _activeChatId = _chatSessions.first['id'].toString();
-      final active = _chatSessions.firstWhere((c) => c['id'] == _activeChatId);
-      _conversation.addAll((active['messages'] as List<dynamic>? ?? []).whereType<Map>().map((m) => Message.fromJson(Map<String, dynamic>.from(m))));
-    }
+    // Always open into a clean chat. Old sessions stay saved for chat history.
+    _activeChatId = DateTime.now().microsecondsSinceEpoch.toString();
+    _conversation.clear();
+    _chatSessions.insert(0, {'id': _activeChatId, 'title': 'New chat', 'messages': <dynamic>[]});
+    await _persistChats();
     notifyListeners();
   }
-
   Future<void> _persistChats() async {
     final index = _chatSessions.indexWhere((c) => c['id'] == _activeChatId);
     if (index >= 0) {
@@ -127,7 +128,7 @@ class JarvisService extends ChangeNotifier {
       content: 'Search the web: $cleanQuery',
       timestamp: DateTime.now(),
     ));
-    _setState(JarvisState.processing);
+    _setStatus(JarvisState.processing, 'Searching the web…');
     try {
       final response = await http
           .post(
@@ -162,12 +163,12 @@ class JarvisService extends ChangeNotifier {
       } else {
         buffer.write('\n\nLive search was used, but the provider returned no source links.');
       }
+      _startTypingResponse();
       _addMessage(Message(
         role: MessageRole.assistant,
         content: buffer.toString(),
         timestamp: DateTime.now(),
       ));
-      _setState(JarvisState.standby);
     } catch (error) {
       _addMessage(Message(
         role: MessageRole.assistant,
@@ -196,6 +197,23 @@ class JarvisService extends ChangeNotifier {
       _isConnected = false;
       notifyListeners();
     }
+  }
+
+  void _setStatus(JarvisState newState, String text) {
+    _state = newState;
+    _statusText = text;
+    notifyListeners();
+  }
+
+  void _startTypingResponse() {
+    _typingResponse = true;
+    _setStatus(JarvisState.processing, 'Writing response…');
+  }
+
+  void finishResponseTyping() {
+    if (!_typingResponse) return;
+    _typingResponse = false;
+    _setState(JarvisState.standby);
   }
 
   void _setState(JarvisState newState) {
@@ -250,6 +268,50 @@ class JarvisService extends ChangeNotifier {
 
   Future<void> sendTextMessage(String text, {bool speakResponse = false, String memoryContext = ''}) async {
     if (text.trim().isEmpty) return;
+  Future<bool> _handleDeviceRequest(String text) async {
+    final value = text.toLowerCase();
+    final wantsInfo = RegExp(r'\b(device info|system info|phone info|about this phone|check my device|check my phone|device details|system details|what phone am i using|what device am i using)\b').hasMatch(value);
+    final settingsMatch = RegExp(r'\b(open|show)\s+(?:the\s+)?(wi-?fi|network|bluetooth|display|screen|sound|audio|battery|apps|applications|system)?\s*settings\b').firstMatch(value);
+    if (!wantsInfo && settingsMatch == null) return false;
+
+    _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
+    if (wantsInfo) {
+      _setStatus(JarvisState.processing, 'Reading device and system information…');
+      try {
+        final info = await _deviceChannel.invokeMapMethod<String, dynamic>('getDeviceInfo');
+        if (info == null) throw Exception('Android did not return device information.');
+        final battery = info['batteryPercent'] as int? ?? -1;
+        final answer = [
+          'Device: ${info['manufacturer']} ${info['model']}',
+          'Android: ${info['androidVersion']} (API ${info['sdk']})',
+          'RAM: ${info['availableRamMb']} MB available of ${info['totalRamMb']} MB',
+          'Internal storage: ${info['storageFreeGb']} GB free of ${info['storageTotalGb']} GB',
+          'Battery: ${battery < 0 ? 'Unavailable' : '$battery%'}${info['charging'] == true ? ' (charging)' : ''}',
+          'Network: ${info['network']}',
+          if (info['lowMemory'] == true) 'Android reports low memory at the moment.',
+        ].join('\n');
+        _startTypingResponse();
+        _addMessage(Message(role: MessageRole.assistant, content: answer, timestamp: DateTime.now()));
+      } catch (error) {
+        _addMessage(Message(role: MessageRole.assistant, content: 'I could not read device information: $error', timestamp: DateTime.now(), isError: true));
+        _setState(JarvisState.standby);
+      }
+      return true;
+    }
+
+    final section = settingsMatch?.group(2)?.toLowerCase() ?? 'general';
+    _setStatus(JarvisState.processing, 'Opening Android $section settings…');
+    try {
+      await _deviceChannel.invokeMethod<bool>('openSettings', {'section': section});
+      _addMessage(Message(role: MessageRole.assistant, content: 'Opening Android $section settings, sir.', timestamp: DateTime.now()));
+    } catch (error) {
+      _addMessage(Message(role: MessageRole.assistant, content: 'Android could not open those settings: $error', timestamp: DateTime.now(), isError: true));
+    }
+    _setState(JarvisState.standby);
+    return true;
+  }
+
+    if (await _handleDeviceRequest(text.trim())) return;
 
     // Route explicit search commands and natural weather questions to live search.
     final trimmed = text.trim();
@@ -280,7 +342,7 @@ class JarvisService extends ChangeNotifier {
       content: text,
       timestamp: DateTime.now(),
     ));
-    _setState(JarvisState.processing);
+    _setStatus(JarvisState.processing, 'Thinking with Gemini…');
 
     try {
       final response = await http
@@ -297,13 +359,16 @@ class JarvisService extends ChangeNotifier {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         final answer = data['response']?.toString() ?? 'No response received, sir.';
+        _startTypingResponse();
         _addMessage(Message(
           role: MessageRole.assistant,
           content: answer,
           timestamp: DateTime.now(),
         ));
-        _setState(JarvisState.standby);
-        if (speakResponse) await _speakResponse(answer);
+        if (speakResponse) {
+          finishResponseTyping();
+          await _speakResponse(answer);
+        }
       } else {
         String detail = 'Cloud service returned HTTP ${response.statusCode}.';
         try {
