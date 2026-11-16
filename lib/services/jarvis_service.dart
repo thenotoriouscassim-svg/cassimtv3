@@ -394,6 +394,8 @@ class JarvisService extends ChangeNotifier {
   }
 
   Future<void> _sendCodingRequestStream(String text, List<Map<String, String>> history, String memoryContext, {bool speakResponse = false}) async {
+    // Show the code-generation spinner immediately while the model starts streaming.
+    _setStatus(JarvisState.processing, 'Generating code…');
     final client = http.Client();
     final placeholder = Message(role: MessageRole.assistant, content: '', timestamp: DateTime.now());
     _addMessage(placeholder);
