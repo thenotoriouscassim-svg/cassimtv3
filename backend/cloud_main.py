@@ -19,6 +19,8 @@ from pydantic import BaseModel, Field
 APP_STARTED = time.time()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = "gemini-3.5-flash-lite"  # Use Gemini Flash-Lite exclusively for speed and cost efficiency.
+ZAI_API_KEY = os.getenv("ZAI_API_KEY", "").strip()
+ZAI_CODE_MODEL = "glm-4.7-flash"
 FISH_API_KEY = os.getenv("FISH_API_KEY", "").strip()
 FISH_AUDIO_VOICE_ID = os.getenv("FISH_AUDIO_VOICE_ID", "").strip()
 FISH_AUDIO_MODEL = os.getenv("FISH_AUDIO_MODEL", "s2.1-pro-free").strip()
@@ -288,6 +290,69 @@ async def live_search(req: SearchRequest):
             print("Gemini search network error; switching to free DuckDuckGo search.")
 
     return await _search_without_gemini(query)
+
+
+@app.post("/code")
+async def code(req: ChatRequest):
+    """Dedicated coding route. Normal conversation continues to use the existing assistant."""
+    if not ZAI_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="The coding service is not configured yet. Add its API key in the server settings."
+        )
+
+    coding_prompt = """You are JARVIS's dedicated software engineer.
+Solve the user's programming task directly and efficiently.
+Prioritize correct, complete, runnable code over long explanations.
+When modifying an existing project, respect the provided code and existing architecture.
+When asked to fix code, return the complete corrected file or the exact complete replacement section, not vague instructions.
+Use fenced code blocks for code so the app's copy-code controls can recognize them.
+Keep explanations short. Never claim that you edited, committed, deployed, or tested files unless a tool actually did so.
+Never reveal internal model, provider, API, key, or server implementation details."""
+
+    messages = [{"role": "system", "content": coding_prompt}]
+    for turn in req.conversation_history[-10:]:
+        role = turn.get("role", "")
+        content = turn.get("content", "")
+        if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+            messages.append({"role": role, "content": content[:16000]})
+    messages.append({"role": "user", "content": req.message})
+
+    payload = {
+        "model": ZAI_CODE_MODEL,
+        "messages": messages,
+        "temperature": 0.2,
+        "max_tokens": 8192,
+        "stream": False,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=12.0)) as client:
+            response = await client.post(
+                "https://api.z.ai/api/paas/v4/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {ZAI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+        if response.status_code >= 400:
+            print("Coding service request failed with HTTP {}.".format(response.status_code))
+            raise HTTPException(
+                status_code=502,
+                detail="The coding service could not complete that request. Please try again."
+            )
+        data = response.json()
+        choices = data.get("choices", [])
+        answer = choices[0].get("message", {}).get("content", "") if choices else ""
+        if not isinstance(answer, str) or not answer.strip():
+            raise HTTPException(status_code=502, detail="The coding service returned an empty answer.")
+        return {"response": answer.strip()}
+    except HTTPException:
+        raise
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="The coding request took too long. Please try again.")
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="JARVIS could not reach the coding service.")
 
 
 @app.post("/chat")
