@@ -302,18 +302,6 @@ class _MessageBubbleState extends State<_MessageBubble> {
               child: Row(children: [
                 Expanded(child: Text(language.isEmpty ? 'CODE' : language.toUpperCase(),
                   style: const TextStyle(color: JarvisColors.cyan, fontSize: 10, letterSpacing: 1.4, fontFamily: 'Orbitron'))),
-                IconButton(
-                  tooltip: 'Copy code',
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                  padding: EdgeInsets.zero,
-                  icon: const Icon(Icons.copy, color: JarvisColors.textSecondary, size: 16),
-                  onPressed: () async {
-                    await Clipboard.setData(ClipboardData(text: code));
-                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text('Code copied'), duration: Duration(seconds: 1)));
-                  },
-                ),
               ]),
             ),
             SingleChildScrollView(
@@ -322,6 +310,32 @@ class _MessageBubbleState extends State<_MessageBubble> {
               child: SelectableText(code, style: const TextStyle(
                 color: Color(0xFFB8E9D2), fontSize: 12, height: 1.5,
                 fontFamily: 'monospace')),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: const BoxDecoration(
+                color: JarvisColors.surface,
+                borderRadius: BorderRadius.vertical(bottom: Radius.circular(8)),
+              ),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () async {
+                    await Clipboard.setData(ClipboardData(text: code));
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('Code copied'), duration: Duration(seconds: 1)));
+                    }
+                  },
+                  icon: const Icon(Icons.copy, size: 15),
+                  label: const Text('COPY CODE'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: JarvisColors.cyan,
+                    visualDensity: VisualDensity.compact,
+                    textStyle: const TextStyle(fontSize: 10, letterSpacing: 1, fontFamily: 'Orbitron'),
+                  ),
+                ),
+              ),
             ),
           ],
         ),
