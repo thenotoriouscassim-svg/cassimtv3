@@ -384,6 +384,15 @@ class JarvisService extends ChangeNotifier {
     return true;
   }
 
+  bool _isCodingRequest(String text) {
+    final value = text.toLowerCase();
+    final hasCodeArtifact = RegExp(r'\b(code|coding|script|function|class|program|app|website|api|bug|error|exception|compile|build|flutter|dart|python|php|javascript|typescript|html|css|sql|yaml|json|regex|github|workflow|gradle|java|kotlin|react|node\.js)\b').hasMatch(value);
+    final hasCodingAction = RegExp(r'\b(write|create|build|make|generate|implement|debug|fix|refactor|edit|update|modify|review|complete|finish|code|program|develop|convert|migrate|integrate|add|remove)\b').hasMatch(value);
+    final hasCodeBlock = value.contains('```') || RegExp(r'\b(stack trace|traceback|syntaxerror|exception:|gradle task|flutter build|compiler error)\b').hasMatch(value);
+    return (hasCodeArtifact && hasCodingAction) || hasCodeBlock ||
+        RegExp(r'\b(code this|write code|let us code|let\x27s code|start coding|fix this code|debug this)\b').hasMatch(value);
+  }
+
   Future<void> sendTextMessage(String text, {bool speakResponse = false, String memoryContext = ''}) async {
     if (text.trim().isEmpty) return;
     if (await _handleDeviceRequest(text.trim())) return;
@@ -407,6 +416,7 @@ class JarvisService extends ChangeNotifier {
       return;
     }
 
+    final codingRequest = _isCodingRequest(trimmed);
     // Send only earlier turns; the backend appends the current message itself.
     final history = _conversation
         .map((m) => {'role': m.role.name, 'content': m.content})
@@ -422,14 +432,14 @@ class JarvisService extends ChangeNotifier {
     try {
       final response = await http
           .post(
-            Uri.parse('$_backendUrl/chat'),
+            Uri.parse('$_backendUrl/${codingRequest ? 'code' : 'chat'}'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({
               'message': memoryContext.trim().isEmpty ? text : '${memoryContext.trim()}\n\nCurrent user message: $text',
               'conversation_history': history,
             }),
           )
-          .timeout(const Duration(seconds: 270));
+          .timeout(Duration(seconds: codingRequest ? 150 : 270));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -439,7 +449,7 @@ class JarvisService extends ChangeNotifier {
           content: answer,
           timestamp: DateTime.now(),
         ));
-        _startTypingResponse();
+        if (!codingRequest) _startTypingResponse();
         if (speakResponse) {
           finishResponseTyping();
           await _speakResponse(answer);
@@ -450,6 +460,9 @@ class JarvisService extends ChangeNotifier {
           detail = (jsonDecode(response.body) as Map<String, dynamic>)['detail']
                   ?.toString() ??
               detail;
+          if (codingRequest && response.statusCode == 503) {
+            detail = 'The coding service is not configured yet. Add the coding API key to the server settings.';
+          }
         } catch (_) {}
         _addMessage(Message(
           role: MessageRole.assistant,
