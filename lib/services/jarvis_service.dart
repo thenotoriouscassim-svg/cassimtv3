@@ -645,10 +645,9 @@ class JarvisService extends ChangeNotifier {
     final placeholder = Message(role: MessageRole.assistant, content: '', timestamp: DateTime.now());
     _addMessage(placeholder);
     final messageIndex = _conversation.length - 1;
-    final developerContext = _developerMode ? 'DEVELOPER MODE: The current speaker has unlocked the developer console. Treat the user as the JARVIS application developer. Be technically precise and never claim tests passed unless they were actually run.\\n\\n' : '';
-    final fullPrompt = developerContext + (memoryContext.trim().isEmpty
+    final fullPrompt = memoryContext.trim().isEmpty
         ? text
-        : '${memoryContext.trim()}\\n\\nCurrent user message: $text');
+        : '${memoryContext.trim()}\\n\\nCurrent user message: $text';
     try {
       final request = http.Request('POST', Uri.parse('$_backendUrl/code'))
         ..headers['Content-Type'] = 'application/json'
@@ -736,12 +735,12 @@ class JarvisService extends ChangeNotifier {
   }
   Future<bool> _handleDeveloperConsole(String text, {bool speakResponse = false}) async {
     final value = text.trim().toLowerCase();
-    if (value == '78654' || value == 'developer mode 78654' || value == 'enter developer mode 78654') {
+    if (value == '78654') {
       _developerMode = true;
       _addMessage(Message(role: MessageRole.user, content: '•••••', timestamp: DateTime.now()));
-      const answer = 'Developer mode activated. Good evening, sir. I am now operating in developer diagnostic mode. You can ask me for a full system check, Cloudflare status, module status, or outstanding issues.';
+      const answer = 'Developer mode activated. Good evening, sir. I am now operating in developer diagnostic mode. You can ask me for a full system check, Cloudflare status, or outstanding issues.';
       _addMessage(Message(role: MessageRole.assistant, content: answer, timestamp: DateTime.now()));
-      if (speakResponse) await _speakResponse(answer); else _startTypingResponse();
+      if (speakResponse) { await _speakResponse(answer); } else { _startTypingResponse(); }
       notifyListeners();
       return true;
     }
@@ -750,7 +749,7 @@ class JarvisService extends ChangeNotifier {
         const answer = 'Developer access requires the five-digit developer code, sir.';
         _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
         _addMessage(Message(role: MessageRole.assistant, content: answer, timestamp: DateTime.now()));
-        if (speakResponse) await _speakResponse(answer); else _startTypingResponse();
+        if (speakResponse) { await _speakResponse(answer); } else { _startTypingResponse(); }
         return true;
       }
       return false;
@@ -760,66 +759,58 @@ class JarvisService extends ChangeNotifier {
       _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
       const answer = 'Developer mode disabled. Returning to standard operating mode.';
       _addMessage(Message(role: MessageRole.assistant, content: answer, timestamp: DateTime.now()));
-      if (speakResponse) await _speakResponse(answer); else _startTypingResponse();
+      if (speakResponse) { await _speakResponse(answer); } else { _startTypingResponse(); }
       notifyListeners();
       return true;
     }
-    final asksDiagnostics = RegExp(r'\b(all modules|modules functioning|system check|full diagnostic|run diagnostics|any issues|outstanding issues|system status|health check)\b').hasMatch(value);
-    final asksCloudflare = RegExp(r'\b(cloudflare|cloudfare|cloud flare|worker|cloud server)\b').hasMatch(value) && RegExp(r'\b(up|online|status|running|healthy|working)\b').hasMatch(value);
-    if (asksDiagnostics || asksCloudflare) {
-      _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
-      _setStatus(JarvisState.processing, 'Running developer diagnostics…');
-      String answer;
-      try {
-        final response = await http.get(Uri.parse(_backendUrl + '/diagnostics')).timeout(const Duration(seconds: 15));
-        if (response.statusCode != 200) {
-          answer = 'I could not complete the diagnostic check. The diagnostic endpoint returned HTTP ' + response.statusCode.toString() + '.';
+    final asksDiagnostics = value.contains('all modules') || value.contains('modules functioning') || value.contains('system check') || value.contains('full diagnostic') || value.contains('run diagnostics') || value.contains('any issues') || value.contains('outstanding issues') || value.contains('system status') || value.contains('health check');
+    final asksCloudflare = (value.contains('cloudflare') || value.contains('cloudfare') || value.contains('cloud flare') || value.contains('worker')) && (value.contains('up') || value.contains('online') || value.contains('status') || value.contains('running') || value.contains('healthy') || value.contains('working'));
+    if (!asksDiagnostics && !asksCloudflare) return false;
+    _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
+    _setState(JarvisState.processing, 'Running developer diagnostics…');
+    String answer;
+    try {
+      final response = await http.get(Uri.parse(_backendUrl + '/diagnostics')).timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) {
+        answer = 'I could not complete the diagnostic check. The endpoint returned HTTP ' + response.statusCode.toString() + '.';
+      } else {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final modules = Map<String, dynamic>.from(data['modules'] as Map? ?? {});
+        String status(String key) { final item = modules[key]; return item is Map ? (item['status']?.toString() ?? 'unknown') : 'unknown'; }
+        String detail(String key) { final item = modules[key]; return item is Map ? (item['detail']?.toString() ?? '') : ''; }
+        final worker = status('cloudflare_worker');
+        final database = status('database');
+        final keys = ['ai_gemini','ai_groq','ai_nvidia','ai_openrouter','coding_standard','coding_advanced','voice_output','speech_transcription','web_search','authentication','chat_memory_sync'];
+        final issues = <String>[];
+        if (worker != 'online') issues.add('Cloudflare Worker is not confirmed online.');
+        if (database != 'online') issues.add('D1 database check: ' + detail('database'));
+        for (final key in keys) { final state = status(key); if (state == 'not_configured' || state == 'degraded' || state == 'unknown') issues.add(key.replaceAll('_',' ') + ': ' + state + '.'); }
+        final report = StringBuffer();
+        if (asksCloudflare && !asksDiagnostics) {
+          report.writeln(worker == 'online' ? 'Cloudflare Worker is responding.' : 'Cloudflare Worker is not confirmed online.');
+          report.writeln(database == 'online' ? 'D1 database query passed.' : 'D1 database query did not pass.');
         } else {
-          final data = jsonDecode(response.body) as Map<String, dynamic>;
-          final modules = Map<String, dynamic>.from(data['modules'] as Map? ?? {});
-          String status(String key) => (modules[key] as Map?)?['status']?.toString() ?? 'unknown';
-          String detail(String key) => (modules[key] as Map?)?['detail']?.toString() ?? '';
-          final worker = status('cloudflare_worker');
-          final database = status('database');
-          final keys = ['ai_gemini','ai_groq','ai_nvidia','ai_openrouter','coding_standard','coding_advanced','voice_output','speech_transcription','web_search','authentication','chat_memory_sync'];
-          final issues = <String>[];
-          if (worker != 'online') issues.add('Cloudflare Worker is not responding as online.');
-          if (database != 'online') issues.add('D1 database check failed: ' + detail('database'));
-          for (final key in keys) {
-            final state = status(key);
-            if (state == 'not_configured' || state == 'degraded') issues.add(key.replaceAll('_',' ') + ': ' + state.replaceAll('_',' ') + '.');
-          }
-          final buffer = StringBuffer();
-          if (asksCloudflare && !asksDiagnostics) {
-            buffer.writeln(worker == 'online' ? 'Cloudflare Worker is responding. The JARVIS cloud endpoint is online.' : 'Cloudflare Worker is not confirmed online.');
-            buffer.writeln(database == 'online' ? 'The connected D1 database also passed its query check.' : 'The D1 database did not pass its query check.');
-          } else {
-            buffer.writeln('Developer diagnostic report.');
-            buffer.writeln('Cloudflare Worker: ' + worker.toUpperCase() + '.');
-            buffer.writeln('D1 database: ' + database.toUpperCase() + '.');
-            buffer.writeln('Authentication and cloud chat/memory sync: ' + status('authentication').toUpperCase() + ' / ' + status('chat_memory_sync').toUpperCase() + '.');
-            buffer.writeln('AI model credentials: Gemini ' + status('ai_gemini') + ', Groq ' + status('ai_groq') + ', NVIDIA ' + status('ai_nvidia') + ', OpenRouter ' + status('ai_openrouter') + '.');
-            buffer.writeln('Coding services: Standard ' + status('coding_standard') + ', Advanced ' + status('coding_advanced') + '.');
-            buffer.writeln('Voice output: ' + status('voice_output') + '. Speech transcription: ' + status('speech_transcription') + '.');
-            buffer.writeln('Web search: ' + status('web_search') + '.');
-            buffer.writeln();
-            if (issues.isEmpty) buffer.writeln('No configuration or database issues were detected.');
-            else { buffer.writeln('Items requiring attention:'); for (final issue in issues) { buffer.writeln('- ' + issue); } }
-            buffer.writeln();
-            buffer.writeln('Note: configured means credentials are present, not that every external provider was actively tested. This check tested the Worker response and database query only.');
-          }
-          answer = buffer.toString().trim();
+          report.writeln('Developer diagnostic report.');
+          report.writeln('Cloudflare Worker: ' + worker.toUpperCase() + '.');
+          report.writeln('D1 database: ' + database.toUpperCase() + '.');
+          report.writeln('Authentication: ' + status('authentication') + '. Cloud chat and memory sync: ' + status('chat_memory_sync') + '.');
+          report.writeln('AI credentials — Gemini: ' + status('ai_gemini') + ', Groq: ' + status('ai_groq') + ', NVIDIA: ' + status('ai_nvidia') + ', OpenRouter: ' + status('ai_openrouter') + '.');
+          report.writeln('Coding — Standard: ' + status('coding_standard') + ', Advanced: ' + status('coding_advanced') + '.');
+          report.writeln('Voice output: ' + status('voice_output') + '. Transcription: ' + status('speech_transcription') + '. Web search: ' + status('web_search') + '.');
+          if (issues.isEmpty) report.writeln('No configuration or database issues were detected.');
+          else { report.writeln('Items requiring attention:'); for (final issue in issues) { report.writeln('- ' + issue); } }
+          report.writeln('Note: credential presence is not proof that each external provider is responding. Only the Worker response and D1 query were actively tested.');
         }
-      } catch (e) {
-        answer = 'The diagnostic request failed: ' + e.toString().replaceFirst('Exception: ','') + '. I cannot confirm the current cloud status.';
+        answer = report.toString().trim();
       }
-      _addMessage(Message(role: MessageRole.assistant, content: answer, timestamp: DateTime.now(), isError: answer.startsWith('I could not') || answer.startsWith('The diagnostic request failed')));
-      await _persistChats();
-      if (speakResponse) await _speakResponse(answer); else _startTypingResponse();
-      _setState(JarvisState.standby);
-      return true;
+    } catch (error) {
+      answer = 'The diagnostic request failed: ' + error.toString() + '. I cannot confirm the current cloud status.';
     }
-    return false;
+    _addMessage(Message(role: MessageRole.assistant, content: answer, timestamp: DateTime.now(), isError: answer.startsWith('I could not') || answer.startsWith('The diagnostic request failed')));
+    if (speakResponse) { await _speakResponse(answer); } else { _startTypingResponse(); }
+    _setState(JarvisState.standby);
+    await _persistChats();
+    return true;
   }
 
   Future<void> sendTextMessage(String text, {bool speakResponse = false, String memoryContext = ''}) async {
@@ -852,8 +843,8 @@ class JarvisService extends ChangeNotifier {
     }
 
     final isCurrentNewsTopic =
-        RegExp(r'\b(iran|usa|united states|israel|palestine|ukraine|russia|lebanon|yemen|syria|gaza|nato|china|taiwan)\b', caseSensitive: false).hasMatch(trimmed) &&
-        RegExp(r'\b(war|conflict|attack|strike|missile|ceasefire|invasion|bombing|latest|news|today|update|tensions)\b', caseSensitive: false).hasMatch(trimmed);
+        RegExp(r'\\b(iran|usa|united states|israel|palestine|ukraine|russia|lebanon|yemen|syria|gaza|nato|china|taiwan)\\b', caseSensitive: false).hasMatch(trimmed) &&
+        RegExp(r'\\b(war|conflict|attack|strike|missile|ceasefire|invasion|bombing|latest|news|today|update|tensions)\\b', caseSensitive: false).hasMatch(trimmed);
     if (isCurrentNewsTopic) {
       await searchWeb(trimmed, speakResponse: speakResponse);
       return;
@@ -887,269 +878,7 @@ class JarvisService extends ChangeNotifier {
             Uri.parse('$_backendUrl/chat'),
             headers: {'Content-Type': 'application/json', ..._accountHeaders},
             body: jsonEncode({
-              'message': (_developerMode ? 'DEVELOPER MODE: The current speaker has unlocked the developer console with the local developer code. Treat the user as the JARVIS application developer. Be direct and technically precise. Never claim a test passed unless it was actually run.\\n\\n' : '') + (memoryContext.trim().isEmpty ? text : '${memoryContext.trim()}\n\nCurrent user message: $text'),
-              'conversation_history': speakResponse
-                  ? history.skip(history.length > 4 ? history.length - 4 : 0)
-                      .map((turn) => {
-                        'role': turn['role']!,
-                        'content': (turn['content'] ?? '').substring(
-                          0, (turn['content'] ?? '').length > 1500 ? 1500 : (turn['content'] ?? '').length),
-                      }).toList()
-                  : history,
-              'voice_mode': speakResponse,
-              'model_choice': _selectedModel,
-            }),
-          )
-          .timeout(const Duration(seconds: 270));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final answer = data['response']?.toString() ?? 'No response received, sir.';
-        _addMessage(Message(
-          role: MessageRole.assistant,
-          content: answer,
-          timestamp: DateTime.now(),
-        ));
-        _startTypingResponse();
-        if (speakResponse) {
-          finishResponseTyping();
-          await _speakResponse(answer);
-        }
-      } else {
-        String detail = 'Cloud service returned HTTP ${response.statusCode}.';
-        try {
-          detail = (jsonDecode(response.body) as Map<String, dynamic>)['detail']
-                  ?.toString() ??
-              detail;
-        } catch (_) {}
-        _addMessage(Message(
-          role: MessageRole.assistant,
-          content: detail,
-          timestamp: DateTime.now(),
-          isError: true,
-        ));
-        _setState(JarvisState.standby);
-      }
-    } catch (_) {
-      _addMessage(Message(
-        role: MessageRole.assistant,
-        content: 'I appear to be having trouble reaching my cloud systems, sir.',
-        timestamp: DateTime.now(),
-        isError: true,
-      ));
-      _setState(JarvisState.standby);
-    }
-  }
-
-  void _addMessage(Message message) {
-    _conversation.add(message);
-    if (_conversation.length > 100) _conversation.removeAt(0);
-    final index = _chatSessions.indexWhere((c) => c['id'] == _activeChatId);
-    if (index >= 0 && _chatSessions[index]['title'] == 'New chat' && message.role == MessageRole.user) {
-      final title = message.content.trim();
-      _chatSessions[index]['title'] = title.length > 32 ? '${title.substring(0, 32)}…' : title;
-    }
-    _persistChats();
-    notifyListeners();
-  }
-
-  void clearConversation() { createNewChat(); }
-
-  void _startStatsPolling() {
-    _statsTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
-      if (!_isConnected) {
-        _retryTicks++;
-        if (_retryTicks >= 5) {
-          _retryTicks = 0;
-          await _connectToBackend();
-        }
-        return;
-      }
-      _retryTicks = 0;
-      try {
-        final response = await http
-            .get(Uri.parse('$_backendUrl/stats'))
-            .timeout(const Duration(seconds: 5));
-        if (response.statusCode == 200) {
-          _systemStats = SystemStats.fromJson(jsonDecode(response.body));
-          notifyListeners();
-        }
-      } catch (_) {}
-    });
-  }
-
-  Future<void> executeCommand(String command) async {
-    if (!_isConnected) return;
-    try {
-      final response = await http.post(
-        Uri.parse('$_backendUrl/command'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'command': command}),
-      );
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        _addMessage(Message(
-          role: MessageRole.assistant,
-          content: data['response'],
-          timestamp: DateTime.now(),
-        ));
-      } else {
-        final detail =
-            (jsonDecode(response.body) as Map<String, dynamic>)['detail'];
-        _addMessage(Message(
-          role: MessageRole.assistant,
-          content: detail?.toString() ?? 'Command was not executed, sir.',
-          timestamp: DateTime.now(),
-          isError: true,
-        ));
-      }
-    } catch (_) {
-      _addMessage(Message(
-        role: MessageRole.assistant,
-        content: 'I could not contact the command service, sir.',
-        timestamp: DateTime.now(),
-        isError: true,
-      ));
-    }
-  }
-
-  Future<void> retryConnection() async {
-    await _connectToBackend();
-  }
-
-  @override
-  void dispose() {
-    _statsTimer?.cancel();
-    _ttsPlayer.dispose();
-    super.dispose();
-  }
-}
-).hasMatch(value) || value == 'lock developer console') {
-      _developerMode = false;
-      _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
-      const answer = 'Developer mode disabled. Returning to standard operating mode.';
-      _addMessage(Message(role: MessageRole.assistant, content: answer, timestamp: DateTime.now()));
-      if (speakResponse) await _speakResponse(answer); else _startTypingResponse();
-      notifyListeners();
-      return true;
-    }
-    final asksDiagnostics = RegExp(r'\b(all modules|modules functioning|system check|full diagnostic|run diagnostics|any issues|outstanding issues|system status|health check)\b').hasMatch(value);
-    final asksCloudflare = RegExp(r'\b(cloudflare|cloudfare|cloud flare|worker|cloud server)\b').hasMatch(value) && RegExp(r'\b(up|online|status|running|healthy|working)\b').hasMatch(value);
-    if (asksDiagnostics || asksCloudflare) {
-      _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
-      _setStatus(JarvisState.processing, 'Running developer diagnostics…');
-      String answer;
-      try {
-        final response = await http.get(Uri.parse(_backendUrl + '/diagnostics')).timeout(const Duration(seconds: 15));
-        if (response.statusCode != 200) {
-          answer = 'I could not complete the diagnostic check. The diagnostic endpoint returned HTTP ' + response.statusCode.toString() + '.';
-        } else {
-          final data = jsonDecode(response.body) as Map<String, dynamic>;
-          final modules = Map<String, dynamic>.from(data['modules'] as Map? ?? {});
-          String status(String key) => (modules[key] as Map?)?['status']?.toString() ?? 'unknown';
-          String detail(String key) => (modules[key] as Map?)?['detail']?.toString() ?? '';
-          final worker = status('cloudflare_worker');
-          final database = status('database');
-          final keys = ['ai_gemini','ai_groq','ai_nvidia','ai_openrouter','coding_standard','coding_advanced','voice_output','speech_transcription','web_search','authentication','chat_memory_sync'];
-          final issues = <String>[];
-          if (worker != 'online') issues.add('Cloudflare Worker is not responding as online.');
-          if (database != 'online') issues.add('D1 database check failed: ' + detail('database'));
-          for (final key in keys) { final state = status(key); if (state == 'not_configured' || state == 'degraded') issues.add(key.replaceAll('_',' ') + ': ' + state.replaceAll('_',' ') + '.'); }
-          final buffer = StringBuffer();
-          if (asksCloudflare && !asksDiagnostics) {
-            buffer.writeln(worker == 'online' ? 'Cloudflare Worker is responding. The JARVIS cloud endpoint is online.' : 'Cloudflare Worker is not confirmed online.');
-            buffer.writeln(database == 'online' ? 'The connected D1 database also passed its query check.' : 'The D1 database did not pass its query check.');
-          } else {
-            buffer.writeln('Developer diagnostic report.');
-            buffer.writeln('Cloudflare Worker: ' + worker.toUpperCase() + '.');
-            buffer.writeln('D1 database: ' + database.toUpperCase() + '.');
-            buffer.writeln('Authentication and cloud chat/memory sync: ' + status('authentication').toUpperCase() + ' / ' + status('chat_memory_sync').toUpperCase() + '.');
-            buffer.writeln('AI model credentials: Gemini ' + status('ai_gemini') + ', Groq ' + status('ai_groq') + ', NVIDIA ' + status('ai_nvidia') + ', OpenRouter ' + status('ai_openrouter') + '.');
-            buffer.writeln('Coding services: Standard ' + status('coding_standard') + ', Advanced ' + status('coding_advanced') + '.');
-            buffer.writeln('Voice output: ' + status('voice_output') + '. Speech transcription: ' + status('speech_transcription') + '.');
-            buffer.writeln('Web search: ' + status('web_search') + '.');
-            buffer.writeln();
-            if (issues.isEmpty) buffer.writeln('No configuration or database issues were detected.');
-            else { buffer.writeln('Items requiring attention:'); for (final issue in issues) { buffer.writeln('- ' + issue); } }
-            buffer.writeln();
-            buffer.writeln('Note: configured means credentials are present, not that every external provider was actively tested. This check tested the Worker response and database query only.');
-          }
-          answer = buffer.toString().trim();
-        }
-      } catch (e) { answer = 'The diagnostic request failed: ' + e.toString().replaceFirst('Exception: ','') + '. I cannot confirm the current cloud status.'; }
-      _addMessage(Message(role: MessageRole.assistant, content: answer, timestamp: DateTime.now(), isError: answer.startsWith('I could not') || answer.startsWith('The diagnostic request failed')));
-      await _persistChats();
-      if (speakResponse) await _speakResponse(answer); else _startTypingResponse();
-      _setState(JarvisState.standby);
-      return true;
-    }
-    return false;
-  }
-  Future<void> sendTextMessage(String text, {bool speakResponse = false, String memoryContext = ''}) async {
-    if (text.trim().isEmpty) return;
-    if (speakResponse) _lastSpeechSucceeded = false;
-    if (_pendingCodingPrompt != null) {
-      await _chooseCodingMode(text, speakResponse: speakResponse);
-      return;
-    }
-    if (await _handleDeviceRequest(text.trim(), speakResponse: speakResponse)) return;
-
-    // Route explicit search commands and natural weather questions to live search.
-    final trimmed = text.trim();
-    final searchCommand = RegExp(
-      r"^(?:please\s+)?(?:search(?:\s+the\s+web)?|look\s+up|google|find\s+online)(?:\s+for)?\s*[:,-]?\s*(.+)$",
-      caseSensitive: false,
-    ).firstMatch(trimmed);
-    final weatherCommand = RegExp(
-      r"^(?:what(?:'s| is)\s+)?(?:the\s+)?(.+?)\s+(?:weather|forecast)(?:\s+today|\s+tomorrow)?\??$",
-      caseSensitive: false,
-    ).firstMatch(trimmed);
-    if (searchCommand != null && (searchCommand.group(1)?.trim().length ?? 0) >= 2) {
-      await searchWeb(searchCommand.group(1)!.trim(), speakResponse: speakResponse);
-      return;
-    }
-    if (weatherCommand != null) {
-      await searchWeb("${weatherCommand.group(1)!.trim()} weather", speakResponse: speakResponse);
-      return;
-    }
-
-    final isCurrentNewsTopic =
-        RegExp(r'\b(iran|usa|united states|israel|palestine|ukraine|russia|lebanon|yemen|syria|gaza|nato|china|taiwan)\b', caseSensitive: false).hasMatch(trimmed) &&
-        RegExp(r'\b(war|conflict|attack|strike|missile|ceasefire|invasion|bombing|latest|news|today|update|tensions)\b', caseSensitive: false).hasMatch(trimmed);
-    if (isCurrentNewsTopic) {
-      await searchWeb(trimmed, speakResponse: speakResponse);
-      return;
-    }
-
-    final codingRequest = _isCodingRequest(trimmed);
-    // Send only earlier turns; the backend appends the current message itself.
-    final history = _conversation
-        .map((m) => {'role': m.role.name, 'content': m.content})
-        .toList();
-
-    _addMessage(Message(
-      role: MessageRole.user,
-      content: text,
-      timestamp: DateTime.now(),
-    ));
-    // Ordinary chat stays visually quiet; no thinking/provider indicator.
-    if (codingRequest) {
-      _pendingCodingPrompt = text;
-      _pendingCodingMemoryContext = memoryContext;
-      _pendingCodingHistory = List<Map<String, String>>.from(history);
-      const prompt = 'Would you like Standard code or Advanced?';
-      _addMessage(Message(role: MessageRole.assistant, content: prompt, timestamp: DateTime.now()));
-      if (speakResponse) { await _speakResponse(prompt); } else { _startTypingResponse(); }
-      return;
-    }
-
-    try {
-      final response = await http
-          .post(
-            Uri.parse('$_backendUrl/chat'),
-            headers: {'Content-Type': 'application/json', ..._accountHeaders},
-            body: jsonEncode({
-              'message': memoryContext.trim().isEmpty ? text : '${memoryContext.trim()}\n\nCurrent user message: $text',
+              'message': (_developerMode ? 'The user has unlocked JARVIS developer mode. Treat them as the application developer. Be technically direct and never claim a test passed unless it actually ran.\\n\\n' : '') + (memoryContext.trim().isEmpty ? text : '${memoryContext.trim()}\n\nCurrent user message: $text'),
               'conversation_history': speakResponse
                   ? history.skip(history.length > 4 ? history.length - 4 : 0)
                       .map((turn) => {
