@@ -24,6 +24,7 @@ class JarvisService extends ChangeNotifier {
   Timer? _statsTimer;
   final AudioPlayer _ttsPlayer = AudioPlayer();
   String _backendUrl = JarvisStrings.backendUrl;
+  String _selectedModel = 'v3';
   int _retryTicks = 0;
   final List<Map<String, dynamic>> _chatSessions = [];
   String _activeChatId = '';
@@ -37,6 +38,25 @@ class JarvisService extends ChangeNotifier {
   bool get isConnected => _isConnected;
   bool get isTypingResponse => _typingResponse;
 
+  String get selectedModel => _selectedModel;
+  String get selectedModelLabel => switch (_selectedModel) {
+    'v1' => 'JARVIS v1',
+    'v2' => 'JARVIS v2',
+    'v3' => 'JARVIS v3',
+    'v4' => 'JARVIS v4',
+    'auto' => 'AUTO',
+    _ => 'JARVIS v3',
+  };
+
+  Future<void> setSelectedModel(String model) async {
+    const allowed = {'auto', 'v1', 'v2', 'v3', 'v4'};
+    if (!allowed.contains(model) || model == _selectedModel) return;
+    _selectedModel = model;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('jarvis_selected_model', model);
+  }
+
   JarvisService() {
     _initialize();
   }
@@ -45,6 +65,10 @@ class JarvisService extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       final savedUrl = prefs.getString('backend_url');
+      final savedModel = prefs.getString('jarvis_selected_model');
+      if (savedModel != null && {'auto', 'v1', 'v2', 'v3', 'v4'}.contains(savedModel)) {
+        _selectedModel = savedModel;
+      }
       if (savedUrl != null && savedUrl.trim().isNotEmpty) {
         _backendUrl = _normalizeUrl(savedUrl);
       }
@@ -635,6 +659,7 @@ class JarvisService extends ChangeNotifier {
                       }).toList()
                   : history,
               'voice_mode': speakResponse,
+              'model_choice': _selectedModel,
             }),
           )
           .timeout(const Duration(seconds: 270));
