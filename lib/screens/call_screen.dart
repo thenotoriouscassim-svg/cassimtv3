@@ -1,9 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:record/record.dart';
 import '../services/jarvis_service.dart';
 import '../services/memory_service.dart';
 
@@ -88,14 +89,12 @@ class CallScreen extends StatefulWidget {
 }
 
 class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
-  final stt.SpeechToText _speech = stt.SpeechToText();
+  final AudioRecorder _recorder = AudioRecorder();
   bool _available = false, _active = false, _busy = false;
-  bool _handlingTurn = false, _startingListen = false;
-  bool _restartInProgress = false, _holdListening = false;
+  bool _recording = false, _handlingTurn = false;
   String _heard = '', _status = 'Connecting…';
-  String? _speechLocale;
-  Timer? _silenceTimer, _restartTimer, _finalizeTimer;
-  DateTime? _lastListenStarted;
+  String? _recordingPath;
+  Timer? _recordingLimit;
 
   late final AnimationController _sonarCtrl, _pulseCtrl, _waveCtrl, _fadeCtrl;
   late final Animation<double> _pulseAnim;
@@ -117,258 +116,96 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   @override
   void dispose() {
     _active = false;
-    _silenceTimer?.cancel();
-    _restartTimer?.cancel();
-    _finalizeTimer?.cancel();
+    _recordingLimit?.cancel();
     _sonarCtrl.dispose();
     _pulseCtrl.dispose();
     _waveCtrl.dispose();
     _fadeCtrl.dispose();
-    _speech.cancel();
+    _recorder.dispose();
     super.dispose();
   }
 
   Future<void> _startCall() async {
-    if (mounted) setState(() => _status = 'Preparing voice engine…');
-    Object? lastError;
-    for (var attempt = 0; attempt < 3; attempt++) {
-      if (!mounted) return;
-      try {
-        _available = await _speech.initialize(
-          onStatus: _onSpeechStatus,
-          onError: (error) {
-            debugPrint('JARVIS Call speech error: ${error.errorMsg}; permanent=${error.permanent}');
-            if (!mounted || !_active || _holdListening || _busy || _handlingTurn) return;
-            final msg = error.errorMsg.toLowerCase();
-            final denied = msg.contains('permission') || msg.contains('not-allowed');
-            final noMatch = msg.contains('no_match') || msg.contains('no match') ||
-                msg.contains('speech_timeout') || msg.contains('speech timeout');
-            final busy = msg.contains('busy') || msg.contains('client');
-            if (denied || (error.permanent && !noMatch && !busy)) {
-              _holdListening = true;
-              _silenceTimer?.cancel();
-              setState(() => _status = denied
-                  ? 'Microphone permission required. Enable it in Settings → Apps → JARVIS → Permissions.'
-                  : 'Speech unavailable: ${error.errorMsg}');
-              return;
-            }
-            if (_heard.trim().isNotEmpty) {
-              _handleTurn(_heard.trim());
-            } else {
-              if (mounted) setState(() => _status = busy ? 'Releasing microphone…' : 'Speak when ready');
-              _scheduleListenRestart(busy ? const Duration(milliseconds: 1800) : const Duration(milliseconds: 900));
-            }
-          },
-        );
-        if (_available) {
-          try {
-            final locales = await _speech.locales();
-            final southAfrican = locales.where((locale) =>
-                locale.localeId.toLowerCase().replaceAll('-', '_') == 'en_za');
-            if (southAfrican.isNotEmpty) _speechLocale = southAfrican.first.localeId;
-          } catch (error) {
-            debugPrint('JARVIS could not load speech locales: $error');
-          }
-          break;
-        }
-      } catch (error) {
-        lastError = error;
-        debugPrint('JARVIS Call init attempt ${attempt + 1} failed: $error');
-      }
-      if (attempt < 2) {
-        if (mounted) setState(() => _status = 'Waiting for microphone permission…');
-        await Future.delayed(Duration(milliseconds: 700 * (attempt + 1)));
-      }
-    }
-    if (!_available) {
-      if (mounted) setState(() => _status = lastError == null
-          ? 'Could not start voice recognition. Close and reopen Call Mode to retry.'
-          : 'Could not start voice recognition: $lastError');
-      return;
-    }
-    if (mounted) setState(() { _active = true; _status = 'Listening'; });
-    await _listen();
-  }
-
-  Future<void> _listen() async {
-    if (!_active || _busy || !_available || _startingListen || _restartInProgress || _speech.isListening) return;
-    final lastStart = _lastListenStarted;
-    if (lastStart != null) {
-      final elapsed = DateTime.now().difference(lastStart);
-      if (elapsed < const Duration(milliseconds: 1100)) {
-        await Future.delayed(const Duration(milliseconds: 1100) - elapsed);
-        if (!_active || _busy || _holdListening || !mounted || _speech.isListening) return;
-      }
-    }
-    _startingListen = true;
-    _holdListening = false;
-    _heard = '';
-    if (mounted) setState(() => _status = 'Activating mic…');
     try {
-      _lastListenStarted = DateTime.now();
-      await _speech.listen(
-        onResult: (result) {
-          _heard = result.recognizedWords;
-          if (_heard.trim().isNotEmpty) _armSilenceTimeout();
-          if (mounted) setState(() => _status = _heard.isEmpty ? 'Listening' : 'Got it…');
-          if (result.finalResult && _heard.trim().isNotEmpty) _handleTurn(_heard.trim());
-        },
-        listenFor: const Duration(seconds: 60),
-        pauseFor: const Duration(seconds: 8),
-        localeId: _speechLocale,
-        partialResults: true,
-        cancelOnError: false,
-        listenMode: stt.ListenMode.dictation,
-      );
-      _armSilenceTimeout();
+      _available = await _recorder.hasPermission();
+      if (!_available) { if (mounted) setState(() => _status = 'Microphone permission required. Enable it in Android Settings.'); return; }
+      if (!mounted) return;
+      setState(() { _active = true; _status = 'Ready — tap the mic and speak'; });
+    } catch (error) { if (mounted) setState(() => _status = 'Microphone unavailable: $error'); }
+  }
+
+  Future<void> _startRecording() async {
+    if (!_active || _busy || _recording || !_available) return;
+    try {
+      final path = Directory.systemTemp.path + '/jarvis_call_' + DateTime.now().microsecondsSinceEpoch.toString() + '.m4a';
+      await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 128000,
+        sampleRate: 44100, numChannels: 1, autoGain: true, echoCancel: true, noiseSuppress: true), path: path);
+      _recordingPath = path; _recording = true; _heard = '';
+      if (mounted) setState(() => _status = 'Recording… tap STOP when finished');
+      _recordingLimit?.cancel();
+      _recordingLimit = Timer(const Duration(minutes: 3), _stopAndTranscribe);
     } catch (error) {
-      final msg = error.toString().toLowerCase();
-      if (msg.contains('busy')) {
-        if (mounted) setState(() => _status = 'Releasing microphone…');
-        _scheduleListenRestart(const Duration(milliseconds: 1800));
-      } else {
-        if (mounted) setState(() => _status = 'Reconnecting mic…');
-        _scheduleListenRestart(const Duration(milliseconds: 1200));
-      }
-    } finally {
-      _startingListen = false;
+      debugPrint('JARVIS recording start failed: $error');
+      if (mounted) setState(() => _status = 'Could not start recording: $error');
     }
   }
 
-  void _scheduleListenRestart([Duration delay = const Duration(milliseconds: 1100)]) {
-    if (_restartInProgress || _holdListening) return;
-    _restartTimer?.cancel();
-    _restartTimer = Timer(delay, () async {
-      if (!_active || _busy || _handlingTurn || _holdListening || !mounted || _startingListen || _restartInProgress) return;
-      _restartInProgress = true;
-      try {
-        if (_speech.isListening) {
-          await _speech.stop();
-          await Future.delayed(const Duration(milliseconds: 700));
-        } else {
-          await Future.delayed(const Duration(milliseconds: 1200));
-        }
-      } finally {
-        _restartInProgress = false;
-      }
-      if (_active && !_busy && !_handlingTurn && !_holdListening && mounted && !_startingListen) {
-        await _listen();
-      }
-    });
-  }
-
-  void _armSilenceTimeout() {
-    _silenceTimer?.cancel();
-    _silenceTimer = Timer(const Duration(seconds: 25), () async {
-      if (!_active || _busy || _handlingTurn || !_speech.isListening || _heard.trim().isNotEmpty) return;
-      _holdListening = true;
-      await _speech.stop();
-      if (mounted) setState(() => _status = 'No speech detected — tap mic to retry');
-    });
+  Future<void> _stopAndTranscribe() async {
+    if (!_recording || _handlingTurn) return;
+    _recordingLimit?.cancel(); _recording = false; _handlingTurn = true; _busy = true;
+    if (mounted) setState(() => _status = 'Preparing your recording…');
+    try {
+      final path = await _recorder.stop();
+      final filePath = path ?? _recordingPath; _recordingPath = null;
+      if (filePath == null || !await File(filePath).exists()) throw Exception('The recording file was not created.');
+      if (mounted) setState(() => _status = 'Transcribing the full recording…');
+      final transcript = await context.read<JarvisService>().transcribeAudio(File(filePath));
+      try { await File(filePath).delete(); } catch (_) {}
+      if (transcript.trim().isEmpty) throw Exception('No speech could be extracted. Try speaking closer to the phone.');
+      _heard = transcript.trim();
+      if (mounted) setState(() => _status = 'Heard you — preparing response…');
+      await _handleTurn(_heard);
+    } catch (error) {
+      debugPrint('JARVIS recording transcription failed: $error');
+      if (mounted) setState(() => _status = 'Transcription failed: $error. Tap mic to try again.');
+    } finally {
+      _busy = false; _handlingTurn = false;
+      if (_active && mounted && !_recording) setState(() => _status = 'Ready — tap the mic and speak');
+    }
   }
 
   Future<void> _toggleListening() async {
-    if (_speech.isListening) {
-      _holdListening = true;
-      _silenceTimer?.cancel();
-      await _speech.stop();
-      if (mounted) setState(() => _status = 'Mic paused — tap to resume');
-    } else {
-      _holdListening = false;
-      await _listen();
-    }
-  }
-
-  void _onSpeechStatus(String status) {
-    if (!_active || !mounted) return;
-    if (status == 'listening') {
-      _finalizeTimer?.cancel();
-      setState(() => _status = 'Listening');
-      return;
-    }
-    if (status == 'done' || status == 'notListening') {
-      _silenceTimer?.cancel();
-      if (_holdListening || _handlingTurn || _busy) return;
-      if (_heard.trim().isNotEmpty) {
-        _finalizeTimer?.cancel();
-        _finalizeTimer = Timer(const Duration(milliseconds: 900), () {
-          if (!_active || _holdListening || _busy || _handlingTurn || !mounted) return;
-          final latest = _heard.trim();
-          if (latest.isNotEmpty) _handleTurn(latest);
-          else _scheduleListenRestart();
-        });
-      } else {
-        _scheduleListenRestart();
-      }
-    }
+    if (_recording) { await _stopAndTranscribe(); } else { await _startRecording(); }
   }
 
   Future<void> _handleTurn(String text) async {
-    if (_handlingTurn || !_active || text.trim().isEmpty) return;
-    _handlingTurn = true;
-    _busy = true;
-    _holdListening = true;
-    _silenceTimer?.cancel();
-    _restartTimer?.cancel();
-    _finalizeTimer?.cancel();
-    var responseSucceeded = false;
-    await _speech.stop();
-    await Future.delayed(const Duration(milliseconds: 450));
-    if (mounted) setState(() => _status = 'Processing…');
+    if (!_active || text.trim().isEmpty) return;
+    if (mounted) setState(() => _status = 'JARVIS is thinking…');
     try {
       final service = context.read<JarvisService>();
       final spoken = text.trim();
       if (RegExp(r'^jarvis[.!?, ]*$', caseSensitive: false).hasMatch(spoken)) {
         await service.speakText('At your service.');
-        responseSucceeded = service.lastSpeechSucceeded;
       } else {
         final command = spoken.replaceFirst(RegExp(r'^jarvis[, ]+', caseSensitive: false), '').trim();
-        await service.sendTextMessage(
-          command.isEmpty ? spoken : command,
-          speakResponse: true,
-          memoryContext: context.read<MemoryService>().buildMemoryContext(),
-        );
-        responseSucceeded = service.lastSpeechSucceeded;
-        if (!responseSucceeded) {
-          final last = service.conversation.isNotEmpty ? service.conversation.last : null;
-          if (last?.isError == true && mounted) {
-            setState(() => _status = 'Cloud response failed — tap mic to retry');
-          }
-        }
+        await service.sendTextMessage(command.isEmpty ? spoken : command, speakResponse: true,
+          memoryContext: context.read<MemoryService>().buildMemoryContext());
       }
     } catch (error) {
       debugPrint('JARVIS call turn failed: $error');
-      responseSucceeded = false;
-    } finally {
-      _busy = false;
-      _handlingTurn = false;
-      if (_active && mounted) {
-        if (responseSucceeded) {
-          setState(() => _status = 'Your turn…');
-          await Future.delayed(const Duration(milliseconds: 500));
-          if (_active && mounted) {
-            _holdListening = false;
-            await _listen();
-          }
-        } else {
-          _holdListening = true;
-          setState(() => _status = 'No spoken reply — tap mic to retry');
-        }
-      }
+      if (mounted) setState(() => _status = 'JARVIS response failed: $error');
     }
   }
 
   Future<void> _endCall() async {
-    _active = false;
-    _silenceTimer?.cancel();
-    _restartTimer?.cancel();
-    _finalizeTimer?.cancel();
-    await _speech.stop();
+    _active = false; _recordingLimit?.cancel();
+    if (_recording) { _recording = false; await _recorder.stop(); }
+    await _recorder.dispose();
     if (mounted) Navigator.of(context).pop();
   }
 
   Color get _accentColor => !_active ? _C.textDim : (_busy ? _C.amber : _C.cyan);
-  bool get _isListening => _active && !_busy && _speech.isListening;
+  bool get _isListening => _active && _recording;
 
   @override
   Widget build(BuildContext context) {
@@ -495,8 +332,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
                     padding: const EdgeInsets.only(bottom: 48),
                     child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                       _ActionButton(onTap: _toggleListening,
-                        icon: _speech.isListening ? Icons.mic_off_rounded : Icons.mic_rounded,
-                        color: _C.cyan, label: _speech.isListening ? 'MUTE' : 'UNMUTE'),
+                        icon: _recording ? Icons.stop_rounded : Icons.mic_rounded,
+                        color: _C.cyan, label: _recording ? 'STOP & SEND' : 'RECORD'),
                       const SizedBox(width: 48),
                       _ActionButton(onTap: _endCall, icon: Icons.call_end_rounded, color: _C.red, label: 'END', primary: true),
                     ]),
