@@ -28,7 +28,7 @@ APP_STARTED = time.time()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = "gemini-3.5-flash-lite"  # Use Gemini Flash-Lite exclusively for speed and cost efficiency.
 ZAI_API_KEY = os.getenv("ZAI_API_KEY", "").strip()
-ZAI_CODE_MODEL = "glm-4.7-flash"
+ZAI_CODE_MODEL = os.getenv("ZAI_CODE_MODEL", "glm-4.6").strip()
 FISH_API_KEY = os.getenv("FISH_API_KEY", "").strip()
 FISH_AUDIO_VOICE_ID = os.getenv("FISH_AUDIO_VOICE_ID", "").strip()
 FISH_AUDIO_MODEL = os.getenv("FISH_AUDIO_MODEL", "s2.1-pro-free").strip()
@@ -532,7 +532,14 @@ async def _call_openai_compatible(req: ChatRequest, *, api_key: str, endpoint: s
             json=payload,
         )
     if response.status_code >= 400:
-        raise RuntimeError(f"{provider} returned HTTP {response.status_code}.")
+        try:
+            error_data = response.json()
+            error_obj = error_data.get("error", error_data)
+            detail = error_obj.get("message", error_obj.get("detail", "")) if isinstance(error_obj, dict) else str(error_obj)
+        except (ValueError, TypeError):
+            detail = response.text[:400]
+        detail = str(detail or "No provider error detail returned.")[:400]
+        raise RuntimeError(f"{provider} returned HTTP {response.status_code}: {detail}")
     data = response.json()
     choices = data.get("choices", [])
     answer = ""
@@ -558,7 +565,7 @@ async def _call_model_provider(req: ChatRequest, choice: str):
         return await _call_openai_compatible(
             req, api_key=os.getenv("NVIDIA_API_KEY", "").strip(),
             endpoint="https://integrate.api.nvidia.com/v1/chat/completions",
-            model=os.getenv("NVIDIA_MODEL", "z-ai/glm-5.3-flash").strip(),
+            model=os.getenv("NVIDIA_MODEL", "nvidia/nemotron-3-super-120b-a12b").strip(),
             provider="JARVIS v2",
         )
     if choice == "v3":
@@ -573,7 +580,7 @@ async def _call_model_provider(req: ChatRequest, choice: str):
     raise RuntimeError("Unknown JARVIS model selection.")
 
 
-@app.post("/models")
+@app.get("/models")
 async def model_status():
     return {
         "models": [
@@ -605,7 +612,7 @@ async def chat(req: ChatRequest):
         except RuntimeError as exc:
             message = str(exc)
             status = 503 if "not configured" in message.lower() else 502
-            raise HTTPException(status_code=status, detail="The selected JARVIS model is unavailable. Choose another model or try again.")
+            raise HTTPException(status_code=status, detail=message)
 
     # AUTO races every configured provider. The first complete, non-empty answer wins.
     # Providers without server-side keys are excluded before any request is sent.
