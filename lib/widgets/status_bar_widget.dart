@@ -166,8 +166,19 @@ class StatusBarWidget extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 5),
-          IconButton(tooltip: 'Chat history', onPressed: () => _showChats(context, jarvis), icon: const Icon(Icons.history_rounded, color: JarvisColors.textSecondary, size: 21)),
-          IconButton(tooltip: 'Memory', onPressed: () => _showMemory(context), icon: const Icon(Icons.psychology_alt_outlined, color: JarvisColors.textSecondary, size: 21)),
+          PopupMenuButton<String>(
+            tooltip: 'More options',
+            onSelected: (value) {
+              if (value == 'history') _showChats(context, jarvis);
+              if (value == 'memory') _showMemory(context);
+            },
+            color: JarvisColors.surface,
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'history', child: ListTile(leading: Icon(Icons.history_rounded), title: Text('Chat history'), contentPadding: EdgeInsets.zero)),
+              PopupMenuItem(value: 'memory', child: ListTile(leading: Icon(Icons.psychology_alt_outlined), title: Text('Memory'), contentPadding: EdgeInsets.zero)),
+            ],
+            icon: const Icon(Icons.more_horiz_rounded, color: JarvisColors.textSecondary),
+          ),
           const SizedBox(width: 5),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
