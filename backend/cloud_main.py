@@ -443,7 +443,11 @@ Never reveal internal model, provider, API, key, or server implementation detail
             await client.aclose()
             raise HTTPException(
                 status_code=502,
-                detail="The coding service is temporarily unavailable. Please try again shortly."
+                detail=(
+                    f"The coding service returned HTTP {last_error[0]} "
+                    f"(code {last_error[1]}): {last_error[2]}"
+                    if last_error else "The coding service is temporarily unavailable. Please try again shortly."
+                )
             )
     except httpx.TimeoutException:
         await client.aclose()
@@ -594,7 +598,8 @@ async def model_status():
                 bool(GEMINI_API_KEY),
                 bool(os.getenv("OPENROUTER_API_KEY", "").strip()),
             ])},
-        ]
+        ],
+        "coding": {"configured": bool(ZAI_API_KEY), "model": ZAI_CODE_MODEL},
     }
 
 
