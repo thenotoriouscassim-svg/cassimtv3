@@ -181,9 +181,13 @@ class JarvisService extends ChangeNotifier {
         buffer.write('\n\nSources:');
         for (final source in sources.take(8)) {
           final title = (source['title'] ?? 'Source').toString().replaceAll('[', '(').replaceAll(']', ')');
+          final publisher = (source['publisher'] ?? '').toString().trim();
+          final published = (source['published'] ?? '').toString().trim();
+          final attribution = [publisher, published].where((value) => value.isNotEmpty).join(' • ');
+          final sourceLabel = attribution.isEmpty ? title : '$title — $attribution';
           final url = (source['url'] ?? '').toString();
           if (url.startsWith('https://') || url.startsWith('http://')) {
-            buffer.write('\n- $title: $url');
+            buffer.write('\n- $sourceLabel: $url');
           }
         }
       } else {
@@ -623,6 +627,15 @@ class JarvisService extends ChangeNotifier {
     }
     if (weatherCommand != null) {
       await searchWeb("${weatherCommand.group(1)!.trim()} weather", speakResponse: speakResponse);
+      return;
+    }
+
+    // Route current geopolitical headlines to live search even when phrased as a short topic.
+    final isCurrentNewsTopic =
+        RegExp(r'\b(iran|usa|united states|israel|palestine|ukraine|russia|lebanon|yemen|syria|gaza|nato|china|taiwan)\b', caseSensitive: false).hasMatch(trimmed) &&
+        RegExp(r'\b(war|conflict|attack|strike|missile|ceasefire|invasion|bombing|latest|news|today|update|tensions)\b', caseSensitive: false).hasMatch(trimmed);
+    if (isCurrentNewsTopic) {
+      await searchWeb(trimmed, speakResponse: speakResponse);
       return;
     }
 
