@@ -785,7 +785,7 @@ class JarvisService extends ChangeNotifier {
 
     final isCurrentNewsTopic =
         RegExp(r'\b(iran|usa|united states|israel|palestine|ukraine|russia|lebanon|yemen|syria|gaza|nato|china|taiwan)\\b', caseSensitive: false).hasMatch(trimmed) &&
-        RegExp(r'\\b(war|conflict|attack|strike|missile|ceasefire|invasion|bombing|latest|news|today|update|tensions)\\b', caseSensitive: false).hasMatch(trimmed);
+        RegExp(r'\b(war|conflict|attack|strike|missile|ceasefire|invasion|bombing|latest|news|today|update|tensions)\\b', caseSensitive: false).hasMatch(trimmed);
     if (isCurrentNewsTopic) {
       await searchWeb(trimmed, speakResponse: speakResponse);
       return;
@@ -965,8 +965,8 @@ class JarvisService extends ChangeNotifier {
       notifyListeners();
       return true;
     }
-    final asksDiagnostics = RegExp(r'\\b(all modules|modules functioning|system check|full diagnostic|run diagnostics|any issues|outstanding issues|system status|health check)\\b').hasMatch(value);
-    final asksCloudflare = RegExp(r'\\b(cloudflare|cloudfare|cloud flare|worker|cloud server)\\b').hasMatch(value) && RegExp(r'\\b(up|online|status|running|healthy|working)\\b').hasMatch(value);
+    final asksDiagnostics = RegExp(r'\b(all modules|modules functioning|system check|full diagnostic|run diagnostics|any issues|outstanding issues|system status|health check)\\b').hasMatch(value);
+    final asksCloudflare = RegExp(r'\b(cloudflare|cloudfare|cloud flare|worker|cloud server)\\b').hasMatch(value) && RegExp(r'\b(up|online|status|running|healthy|working)\\b').hasMatch(value);
     if (asksDiagnostics || asksCloudflare) {
       _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
       _setStatus(JarvisState.processing, 'Running developer diagnostics…');
@@ -1046,8 +1046,8 @@ class JarvisService extends ChangeNotifier {
     }
 
     final isCurrentNewsTopic =
-        RegExp(r'\\b(iran|usa|united states|israel|palestine|ukraine|russia|lebanon|yemen|syria|gaza|nato|china|taiwan)\\b', caseSensitive: false).hasMatch(trimmed) &&
-        RegExp(r'\\b(war|conflict|attack|strike|missile|ceasefire|invasion|bombing|latest|news|today|update|tensions)\\b', caseSensitive: false).hasMatch(trimmed);
+        RegExp(r'\b(iran|usa|united states|israel|palestine|ukraine|russia|lebanon|yemen|syria|gaza|nato|china|taiwan)\\b', caseSensitive: false).hasMatch(trimmed) &&
+        RegExp(r'\b(war|conflict|attack|strike|missile|ceasefire|invasion|bombing|latest|news|today|update|tensions)\\b', caseSensitive: false).hasMatch(trimmed);
     if (isCurrentNewsTopic) {
       await searchWeb(trimmed, speakResponse: speakResponse);
       return;
