@@ -94,37 +94,35 @@ async function provider(req, env, choice) {
   return compatible(req, env, choice);
 }
 async function callVoice(req, env) {
-  // Call Mode uses a small, low-latency model independently of the normal chat selector.
-  if (configured(env, "GROQ_API_KEY")) {
-    try {
-      const data = await fetchJson("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${env.GROQ_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: env.GROQ_VOICE_MODEL || "openai/gpt-oss-20b",
-          messages: messagesFor(req),
-          temperature: 0.5,
-          max_tokens: 256,
-          stream: false
-        })
-      }, 20000);
-      let answer = data.choices?.[0]?.message?.content || "";
-      if (Array.isArray(answer)) answer = answer.map(x => x.text || "").join("");
-      answer = String(answer).trim();
-      if (answer) return answer;
-      throw new Error("Fast voice model returned an empty answer.");
-    } catch (e) {
-      console.error("Fast Call Mode model failed; trying Gemini fallback:", e.message);
-    }
+  // AUTO Call Mode: ask every configured assistant in parallel and speak the first valid answer.
+  const available = ["v1", "v2", "v3", "v4"].filter(choice => {
+    const key = { v1: "GROQ_API_KEY", v2: "NVIDIA_API_KEY", v3: "GEMINI_API_KEY", v4: "OPENROUTER_API_KEY" }[choice];
+    return configured(env, key);
+  });
+  if (!available.length) throw new Error("No assistant models are configured.");
+  const pending = available.map(model => {
+    const token = {};
+    token.promise = provider(req, env, model).then(
+      response => ({ model, response, token }),
+      failure => ({ model, error: failure, token })
+    );
+    return token;
+  });
+  const failures = [];
+  while (pending.length) {
+    const result = await Promise.race(pending.map(item => item.promise));
+    if (result.response) return { response: result.response, model: result.model };
+    failures.push(`${result.model}: ${result.error?.message || "failed"}`);
+    pending.splice(pending.indexOf(result.token), 1);
   }
-  return gemini(req, env);
+  throw new Error("All Call Mode models failed. " + failures.join("; ").slice(0, 500));
 }
 
 async function chat(req, env) {
   if (typeof req.message !== "string" || !req.message.trim() || req.message.length > 12000)
     return error("Message must contain between 1 and 12000 characters.", 422);
   if (req.voice_mode) {
-    try { return json({ response: await callVoice(req, env), model_choice: "voice-fast" }); }
+    try { const result = await callVoice(req, env); return json({ response: result.response, model_choice: result.model, selection: "auto" }); }
     catch (e) {
       const msg = String(e.message || e);
       return error(msg, /not configured/i.test(msg) ? 503 : /timeout|abort/i.test(msg) ? 504 : 502);
