@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'services/jarvis_service.dart';
+import 'services/account_service.dart';
+import 'screens/auth_screen.dart';
 import 'services/memory_service.dart';
 import 'screens/main_screen.dart';
 import 'utils/constants.dart';
@@ -25,6 +27,7 @@ void main() async {
   runApp(
     MultiProvider(
       providers: [
+        ChangeNotifierProvider(create: (_) => AccountService()),
         ChangeNotifierProvider(create: (_) => JarvisService()),
         ChangeNotifierProvider(create: (_) => MemoryService()),
       ],
@@ -56,7 +59,16 @@ class JarvisApp extends StatelessWidget {
           bodyMedium: TextStyle(color: JarvisColors.textSecondary, fontFamily: 'Roboto'),
         ),
       ),
-      home: const MainScreen(),
+      home: const _AccountGate(),
     );
+  }
+}
+
+class _AccountGate extends StatelessWidget {
+  const _AccountGate();
+  @override Widget build(BuildContext context) {
+    final account = context.watch<AccountService>();
+    if (!account.isReady) return const Scaffold(backgroundColor: JarvisColors.background,body:Center(child:CircularProgressIndicator(color:JarvisColors.cyan)));
+    return account.isLoggedIn ? const MainScreen() : const AuthScreen();
   }
 }
