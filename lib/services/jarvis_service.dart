@@ -25,6 +25,9 @@ class JarvisService extends ChangeNotifier {
   final AudioPlayer _ttsPlayer = AudioPlayer();
   String _backendUrl = JarvisStrings.backendUrl;
   String _selectedModel = 'v3';
+  String? _pendingCodingPrompt;
+  String _pendingCodingMemoryContext = '';
+  List<Map<String, String>> _pendingCodingHistory = [];
   int _retryTicks = 0;
   final List<Map<String, dynamic>> _chatSessions = [];
   String _activeChatId = '';
@@ -531,7 +534,7 @@ class JarvisService extends ChangeNotifier {
         RegExp(r'\b(code this|write code|let us code|let\x27s code|start coding|fix this code|debug this)\b').hasMatch(value);
   }
 
-  Future<void> _sendCodingRequestStream(String text, List<Map<String, String>> history, String memoryContext, {bool speakResponse = false}) async {
+  Future<void> _sendCodingRequestStream(String text, List<Map<String, String>> history, String memoryContext, {bool speakResponse = false, String mode = 'standard'}) async {
     // Show the code-generation spinner immediately while the model starts streaming.
     _setStatus(JarvisState.processing, 'Generating code…');
     final client = http.Client();
@@ -547,6 +550,7 @@ class JarvisService extends ChangeNotifier {
         ..body = jsonEncode({
           'message': fullPrompt,
           'conversation_history': history,
+          'mode': mode,
         });
       final streamed = await client.send(request).timeout(const Duration(seconds: 150));
       if (streamed.statusCode != 200) {
@@ -603,8 +607,29 @@ class JarvisService extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _chooseCodingMode(String choice, {bool speakResponse = false}) async {
+    final mode = choice.trim().toLowerCase();
+    if (mode != 'standard' && mode != 'advanced') {
+      _addMessage(Message(role: MessageRole.assistant, content: 'Please reply with Standard or Advanced.', timestamp: DateTime.now()));
+      _startTypingResponse();
+      return;
+    }
+    final prompt = _pendingCodingPrompt;
+    if (prompt == null) return;
+    final history = List<Map<String, String>>.from(_pendingCodingHistory);
+    final memory = _pendingCodingMemoryContext;
+    _pendingCodingPrompt = null;
+    _pendingCodingMemoryContext = '';
+    _pendingCodingHistory = [];
+    _addMessage(Message(role: MessageRole.user, content: choice, timestamp: DateTime.now()));
+    await _sendCodingRequestStream(prompt, history, memory, speakResponse: speakResponse, mode: mode);
+  }
   Future<void> sendTextMessage(String text, {bool speakResponse = false, String memoryContext = ''}) async {
     if (text.trim().isEmpty) return;
+    if (_pendingCodingPrompt != null) {
+      await _chooseCodingMode(text, speakResponse: speakResponse);
+      return;
+    }
     if (await _handleDeviceRequest(text.trim(), speakResponse: speakResponse)) return;
 
     // Route explicit search commands and natural weather questions to live search.
@@ -639,7 +664,11 @@ class JarvisService extends ChangeNotifier {
     ));
     // Ordinary chat stays visually quiet; no thinking/provider indicator.
     if (codingRequest) {
-      await _sendCodingRequestStream(text, history, memoryContext, speakResponse: speakResponse);
+      _pendingCodingPrompt = text;
+      _pendingCodingMemoryContext = memoryContext;
+      _pendingCodingHistory = List<Map<String, String>>.from(history);
+      _addMessage(Message(role: MessageRole.assistant, content: 'Standard code or Advanced?', timestamp: DateTime.now()));
+      _startTypingResponse();
       return;
     }
 
