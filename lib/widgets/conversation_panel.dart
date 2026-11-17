@@ -80,31 +80,38 @@ class _ConversationPanelState extends State<ConversationPanel> {
 
   Widget _buildEmpty() {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.chat_bubble_outline, color: JarvisColors.textDim, size: 32),
-          const SizedBox(height: 12),
-          Text(
-            'Ask JARVIS anything',
-            style: TextStyle(
-              color: JarvisColors.textDim,
-              fontSize: 13,
-              letterSpacing: 2,
-              fontFamily: 'Orbitron',
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 76,
+              height: 76,
+              decoration: BoxDecoration(
+                color: JarvisColors.surface,
+                borderRadius: BorderRadius.circular(26),
+                border: Border.all(color: JarvisColors.cyan.withOpacity(.22)),
+                boxShadow: [BoxShadow(color: JarvisColors.cyan.withOpacity(.07), blurRadius: 32, spreadRadius: 3)],
+              ),
+              child: const Icon(Icons.blur_on_rounded, color: JarvisColors.cyan, size: 42),
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'or type a message below',
-            style: TextStyle(
-              color: JarvisColors.textDim.withOpacity(0.6),
-              fontSize: 10,
-              letterSpacing: 1,
-              fontFamily: 'Orbitron',
+            const SizedBox(height: 24),
+            const Text('How can I help?', style: TextStyle(color: JarvisColors.textPrimary, fontSize: 23, fontWeight: FontWeight.w700, letterSpacing: -.5)),
+            const SizedBox(height: 8),
+            const Text(
+              'Your assistant is ready. Ask a question, start a project, or tell me what you need.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: JarvisColors.textSecondary, fontSize: 12, height: 1.6),
             ),
-          ),
-        ],
+            const SizedBox(height: 18),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+              decoration: BoxDecoration(color: JarvisColors.surface, borderRadius: BorderRadius.circular(30), border: Border.all(color: JarvisColors.border)),
+              child: const Text('JARVIS AI  ·  BY CASSIMTV', style: TextStyle(color: JarvisColors.textDim, fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -406,7 +413,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                       color: message.isError ? JarvisColors.red : JarvisColors.textPrimary,
                       fontSize: 13,
                       height: 1.6,
-                      fontFamily: 'Orbitron',
+                      fontFamily: 'Roboto',
                       fontWeight: FontWeight.normal,
                     ),
                   ),
