@@ -318,7 +318,7 @@ async function handle(request, env) {
     { id: "v3", name: "JARVIS v3", configured: configured(env, "GEMINI_API_KEY") },
     { id: "v4", name: "JARVIS v4", configured: configured(env, "OPENROUTER_API_KEY") },
     { id: "auto", name: "AUTO", configured: ["GROQ_API_KEY","NVIDIA_API_KEY","GEMINI_API_KEY","OPENROUTER_API_KEY"].some(k => configured(env,k)) },
-  ], coding: { standard_configured: configured(env, "ZAI_API_KEY"), standard_model: env.ZAI_CODE_MODEL || "glm-4.6", advanced_configured: configured(env, "NVIDIA_API_KEY"), advanced_model: env.NVIDIA_DEEPSEEK_CODE_MODEL || "deepseek-ai/deepseek-v4.1-flash" } });
+  ], coding: { standard_configured: configured(env, "ZAI_API_KEY"), standard_model: env.ZAI_CODE_MODEL || "glm-4.6", advanced_configured: configured(env, "NVIDIA_API_KEY"), advanced_model: env.NVIDIA_ADVANCED_CODE_MODEL || "poolside/laguna-xs-2.1" } });
   if (request.method === "GET" && url.pathname === "/stats") return json({ cpu_percent: null, ram_used_gb: null, ram_total_gb: null, ram_percent: null, storage_used_gb: null, storage_total_gb: null, storage_percent: null, cpu_temp: null, battery_percent: null, network_status: "connected", platform: "Cloudflare Workers", uptime_seconds: null });
   if (request.method !== "POST") return error("Not found.", 404);
   if (request.method === "POST" && url.pathname === "/transcribe") return transcribe(request, env);
