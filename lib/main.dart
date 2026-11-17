@@ -69,6 +69,8 @@ class _AccountGate extends StatelessWidget {
   @override Widget build(BuildContext context) {
     final account = context.watch<AccountService>();
     if (!account.isReady) return const Scaffold(backgroundColor: JarvisColors.background,body:Center(child:CircularProgressIndicator(color:JarvisColors.cyan)));
-    return account.isLoggedIn ? const MainScreen() : const AuthScreen();
+    if (!account.isLoggedIn) return const AuthScreen();
+    if (!account.hasRecovery) return const RecoverySetupScreen();
+    return const MainScreen();
   }
 }
