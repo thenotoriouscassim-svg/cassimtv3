@@ -24,7 +24,9 @@ class _CallScreenState extends State<CallScreen> {
   Timer? _restartTimer;
   Timer? _finalizeTimer;
   bool _startingListen = false;
+  bool _restartInProgress = false;
   bool _holdListening = false;
+  DateTime? _lastListenStarted;
 
   @override
   void initState() {
@@ -49,19 +51,24 @@ class _CallScreenState extends State<CallScreen> {
             if (!mounted || !_active || _holdListening || _busy || _handlingTurn) return;
             final message = error.errorMsg.toLowerCase();
             final denied = message.contains('permission') || message.contains('not-allowed');
-            if (denied || error.permanent) {
+            final noMatch = message.contains('no_match') || message.contains('no match') ||
+                message.contains('speech_timeout') || message.contains('speech timeout');
+            final busy = message.contains('busy') || message.contains('client');
+            if (denied || (error.permanent && !noMatch && !busy)) {
               _holdListening = true;
               _silenceTimer?.cancel();
               setState(() => _status = denied
                   ? 'Microphone permission is required. Allow it in Android Settings > Apps > JARVIS AI > Permissions.'
-                  : 'Speech recognition stopped: ${error.errorMsg}');
+                  : 'Speech recognition is unavailable: ${error.errorMsg}');
               return;
             }
             if (_heard.trim().isNotEmpty) {
               _handleTurn(_heard.trim());
             } else {
-              if (mounted) setState(() => _status = 'Reconnecting microphone…');
-              _scheduleListenRestart();
+              // Android's no-match/timeout is a normal empty listening cycle.
+              // "busy" means the recognizer has not released its previous session yet.
+              if (mounted) setState(() => _status = busy ? 'Releasing microphone…' : 'Listening — try speaking again');
+              _scheduleListenRestart(busy ? const Duration(milliseconds: 1800) : const Duration(milliseconds: 900));
             }
           },
         );
@@ -89,48 +96,69 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _listen() async {
-    if (!_active || _busy || !_available || _startingListen || _speech.isListening) return;
+    if (!_active || _busy || !_available || _startingListen || _restartInProgress || _speech.isListening) return;
+    // Avoid reopening Android's recognizer immediately after stop/cancel.
+    final lastStart = _lastListenStarted;
+    if (lastStart != null) {
+      final elapsed = DateTime.now().difference(lastStart);
+      if (elapsed < const Duration(milliseconds: 1100)) {
+        await Future.delayed(const Duration(milliseconds: 1100) - elapsed);
+        if (!_active || _busy || _holdListening || !mounted || _speech.isListening) return;
+      }
+    }
     _startingListen = true;
     _holdListening = false;
     _heard = '';
     if (mounted) setState(() => _status = 'Starting microphone…');
     try {
+      _lastListenStarted = DateTime.now();
       await _speech.listen(
         onResult: (result) {
           _heard = result.recognizedWords;
-          _armSilenceTimeout();
+          if (_heard.trim().isNotEmpty) _armSilenceTimeout();
           if (mounted) setState(() => _status = _heard.isEmpty ? 'Listening — speak now' : 'I heard you…');
-          if (result.finalResult) _handleTurn(_heard);
+          if (result.finalResult && _heard.trim().isNotEmpty) _handleTurn(_heard.trim());
         },
-        listenFor: const Duration(minutes: 1),
-        pauseFor: const Duration(seconds: 5),
+        listenFor: const Duration(seconds: 45),
+        pauseFor: const Duration(seconds: 6),
         partialResults: true,
         cancelOnError: false,
         listenMode: stt.ListenMode.dictation,
       );
-      // The speech plugin may report isListening a moment after listen() returns.
-      // Do not restart here; wait for its status callback to avoid start/stop loops.
       _armSilenceTimeout();
     } catch (error) {
-      _holdListening = true;
-      if (mounted) setState(() => _status = 'Could not start microphone: $error');
+      final message = error.toString().toLowerCase();
+      if (message.contains('busy')) {
+        if (mounted) setState(() => _status = 'Releasing microphone…');
+        _scheduleListenRestart(const Duration(milliseconds: 1800));
+      } else {
+        if (mounted) setState(() => _status = 'Reconnecting microphone…');
+        _scheduleListenRestart(const Duration(milliseconds: 1200));
+      }
     } finally {
       _startingListen = false;
     }
   }
 
-  void _scheduleListenRestart() {
+  void _scheduleListenRestart([Duration delay = const Duration(milliseconds: 1100)]) {
+    if (_restartInProgress || _holdListening) return;
     _restartTimer?.cancel();
-    _restartTimer = Timer(const Duration(milliseconds: 900), () async {
-      if (!_active || _busy || _handlingTurn || _holdListening || !mounted || _startingListen) return;
-      // A stale isListening flag can survive an Android recognition error.
-      // Explicitly close that session before opening the next one.
-      if (_speech.isListening) {
-        await _speech.stop();
-        await Future.delayed(const Duration(milliseconds: 350));
-      }
-      if (_active && !_busy && !_handlingTurn && !_holdListening && mounted && !_startingListen) {
-        await _listen();
+    _restartTimer = Timer(delay, () async {
+      if (!_active || _busy || _handlingTurn || _holdListening || !mounted || _startingListen || _restartInProgress) return;
+      _restartInProgress = true;
+      try {
+        if (_speech.isListening) {
+          await _speech.stop();
+          await Future.delayed(const Duration(milliseconds: 700));
+        } else {
+          // Give the native Android recognizer time to release the previous client.
+          await Future.delayed(const Duration(milliseconds: 1200));
+        }
+        if (_active && !_busy && !_handlingTurn && !_holdListening && mounted && !_startingListen) {
+          await _listen();
+        }
+      } finally {
+        _restartInProgress = false;
       }
     });
   }
@@ -193,6 +221,7 @@ class _CallScreenState extends State<CallScreen> {
     _restartTimer?.cancel();
     _finalizeTimer?.cancel();
     await _speech.stop();
+    await Future.delayed(const Duration(milliseconds: 450));
     if (mounted) setState(() => _status = 'JARVIS is thinking...');
     try {
       final spoken = text.trim();
