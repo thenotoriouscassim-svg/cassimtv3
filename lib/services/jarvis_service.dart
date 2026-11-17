@@ -645,9 +645,10 @@ class JarvisService extends ChangeNotifier {
     final placeholder = Message(role: MessageRole.assistant, content: '', timestamp: DateTime.now());
     _addMessage(placeholder);
     final messageIndex = _conversation.length - 1;
-    final fullPrompt = memoryContext.trim().isEmpty
+    final developerContext = _developerMode ? 'DEVELOPER MODE: The current speaker has unlocked the developer console. Treat the user as the JARVIS application developer. Be technically precise and never claim tests passed unless they were actually run.\\n\\n' : '';
+    final fullPrompt = developerContext + (memoryContext.trim().isEmpty
         ? text
-        : '${memoryContext.trim()}\\n\\nCurrent user message: $text';
+        : '${memoryContext.trim()}\\n\\nCurrent user message: $text');
     try {
       final request = http.Request('POST', Uri.parse('$_backendUrl/code'))
         ..headers['Content-Type'] = 'application/json'
