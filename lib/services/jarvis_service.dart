@@ -767,7 +767,7 @@ class JarvisService extends ChangeNotifier {
     final asksCloudflare = (value.contains('cloudflare') || value.contains('cloudfare') || value.contains('cloud flare') || value.contains('worker')) && (value.contains('up') || value.contains('online') || value.contains('status') || value.contains('running') || value.contains('healthy') || value.contains('working'));
     if (!asksDiagnostics && !asksCloudflare) return false;
     _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
-    _setState(JarvisState.processing, 'Running developer diagnostics…');
+    _setStatus(JarvisState.processing, 'Running developer diagnostics…');
     String answer;
     try {
       final response = await http.get(Uri.parse(_backendUrl + '/diagnostics')).timeout(const Duration(seconds: 15));
