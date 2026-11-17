@@ -110,7 +110,10 @@ class AccountService extends ChangeNotifier {
         body: jsonEncode({'recovery_question':question,'recovery_answer':answer})).timeout(const Duration(seconds:15));
       final data = jsonDecode(r.body) as Map<String,dynamic>;
       if (r.statusCode != 200) { _error = data['detail']?.toString() ?? 'Could not save recovery question.'; return false; }
-      _hasRecovery = true; return true;
+      _hasRecovery = true;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('jarvis_has_recovery', true);
+      return true;
     } catch (_) { _error = 'Could not reach the account server.'; return false; }
     finally { _busy = false; notifyListeners(); }
   }
