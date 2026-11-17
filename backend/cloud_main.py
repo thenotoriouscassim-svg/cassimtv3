@@ -76,6 +76,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=12000)
     conversation_history: List[Dict[str, str]] = Field(default_factory=list)
     voice_mode: bool = False
+    model_choice: str = Field(default="v3", pattern="^(auto|v1|v2|v3|v4)$")
 
 class CommandRequest(BaseModel):
     command: str = Field(min_length=1, max_length=2000)
@@ -468,92 +469,180 @@ Never reveal internal model, provider, API, key, or server implementation detail
     )
 
 
-@app.post("/chat")
-async def chat(req: ChatRequest):
-    if not GEMINI_API_KEY:
-        raise HTTPException(
-            status_code=503,
-            detail="JARVIS is online, but its assistant service is not configured. Please contact the administrator."
-        )
-
-    contents = []
+def _chat_messages(req: ChatRequest):
+    messages = [{"role": "system", "content": (
+        JARVIS_SYSTEM_PROMPT
+        + ("\n\nVOICE CALL MODE: Reply immediately and naturally in 1-3 short spoken sentences. "
+           "Lead with the direct answer. Avoid long lists, markdown, preambles, and unnecessary explanations. "
+           "Only give a detailed answer when the user explicitly asks for one."
+           if req.voice_mode else "")
+    )}]
     for turn in req.conversation_history[-12:]:
         role = turn.get("role", "")
         content = turn.get("content", "")
         if role in ("user", "assistant", "model") and isinstance(content, str) and content.strip():
-            contents.append({
-                "role": "model" if role in ("assistant", "model") else "user",
-                "parts": [{"text": content[:12000]}],
-            })
-    contents.append({"role": "user", "parts": [{"text": req.message}]})
+            messages.append({"role": "assistant" if role in ("assistant", "model") else "user", "content": content[:12000]})
+    messages.append({"role": "user", "content": req.message})
+    return messages
 
+
+async def _call_gemini(req: ChatRequest):
+    if not GEMINI_API_KEY:
+        raise RuntimeError("Google AI is not configured.")
+    contents = []
+    for message in _chat_messages(req):
+        role = "model" if message["role"] in ("assistant", "system") else "user"
+        if message["role"] == "system":
+            continue
+        contents.append({"role": role, "parts": [{"text": message["content"]}]})
+    system_text = _chat_messages(req)[0]["content"]
     payload = {
-        "system_instruction": {"parts": [{"text": (
-            JARVIS_SYSTEM_PROMPT
-            + ("\\n\\nVOICE CALL MODE: Reply immediately and naturally in 1-3 short spoken sentences. "
-               "Lead with the direct answer. Avoid long lists, markdown, preambles, and unnecessary explanations. "
-               "Only give a detailed answer when the user explicitly asks for one."
-               if req.voice_mode else "")
-        )}]},
+        "system_instruction": {"parts": [{"text": system_text}]},
         "contents": contents,
-        # Voice calls need a short spoken answer; normal chat retains its full output budget.
-        "generationConfig": {"maxOutputTokens": 512 if req.voice_mode else 65536},
+        "generationConfig": {"maxOutputTokens": 512 if req.voice_mode else 8192},
     }
-    models_to_try = (GEMINI_MODEL,)
-    last_provider_error = "The AI provider is temporarily unavailable."
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=12.0)) as client:
+        response = await client.post(url, params={"key": GEMINI_API_KEY}, json=payload)
+    if response.status_code >= 400:
+        raise RuntimeError(f"Google AI returned HTTP {response.status_code}.")
+    data = response.json()
+    candidates = data.get("candidates", [])
+    parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
+    answer = "".join(part.get("text", "") for part in parts).strip()
+    if not answer:
+        raise RuntimeError("Google AI returned an empty answer.")
+    return answer
+
+
+async def _call_openai_compatible(req: ChatRequest, *, api_key: str, endpoint: str, model: str, provider: str):
+    if not api_key:
+        raise RuntimeError(f"{provider} is not configured.")
+    payload = {
+        "model": model,
+        "messages": _chat_messages(req),
+        "temperature": 0.7,
+        "max_tokens": 512 if req.voice_mode else 8192,
+        "stream": False,
+    }
+    async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=12.0)) as client:
+        response = await client.post(
+            endpoint,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+        )
+    if response.status_code >= 400:
+        raise RuntimeError(f"{provider} returned HTTP {response.status_code}.")
+    data = response.json()
+    choices = data.get("choices", [])
+    answer = ""
+    if choices:
+        answer = (choices[0].get("message") or {}).get("content", "")
+    if isinstance(answer, list):
+        answer = "".join(part.get("text", "") for part in answer if isinstance(part, dict))
+    answer = str(answer).strip()
+    if not answer:
+        raise RuntimeError(f"{provider} returned an empty answer.")
+    return answer
+
+
+async def _call_model_provider(req: ChatRequest, choice: str):
+    if choice == "v1":
+        return await _call_openai_compatible(
+            req, api_key=os.getenv("GROQ_API_KEY", "").strip(),
+            endpoint="https://api.groq.com/openai/v1/chat/completions",
+            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip(),
+            provider="JARVIS v1",
+        )
+    if choice == "v2":
+        return await _call_openai_compatible(
+            req, api_key=os.getenv("NVIDIA_API_KEY", "").strip(),
+            endpoint="https://integrate.api.nvidia.com/v1/chat/completions",
+            model=os.getenv("NVIDIA_MODEL", "nvidia/llama-3.1-nemotron-70b-instruct").strip(),
+            provider="JARVIS v2",
+        )
+    if choice == "v3":
+        return await _call_gemini(req)
+    if choice == "v4":
+        return await _call_openai_compatible(
+            req, api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),
+            endpoint="https://openrouter.ai/api/v1/chat/completions",
+            model=os.getenv("OPENROUTER_MODEL", "openrouter/free").strip(),
+            provider="JARVIS v4",
+        )
+    raise RuntimeError("Unknown JARVIS model selection.")
+
+
+@app.post("/models")
+async def model_status():
+    return {
+        "models": [
+            {"id": "v1", "name": "JARVIS v1", "configured": bool(os.getenv("GROQ_API_KEY", "").strip())},
+            {"id": "v2", "name": "JARVIS v2", "configured": bool(os.getenv("NVIDIA_API_KEY", "").strip())},
+            {"id": "v3", "name": "JARVIS v3", "configured": bool(GEMINI_API_KEY)},
+            {"id": "v4", "name": "JARVIS v4", "configured": bool(os.getenv("OPENROUTER_API_KEY", "").strip())},
+            {"id": "auto", "name": "AUTO", "configured": any([
+                bool(os.getenv("GROQ_API_KEY", "").strip()),
+                bool(os.getenv("NVIDIA_API_KEY", "").strip()),
+                bool(GEMINI_API_KEY),
+                bool(os.getenv("OPENROUTER_API_KEY", "").strip()),
+            ])},
+        ]
+    }
+
+
+@app.post("/chat")
+async def chat(req: ChatRequest):
+    choice = req.model_choice
+    if choice != "auto":
+        try:
+            answer = await _call_model_provider(req, choice)
+            return {"response": answer, "model_choice": choice}
+        except httpx.TimeoutException:
+            raise HTTPException(status_code=504, detail="JARVIS is taking too long to respond. Please try again.")
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="JARVIS could not reach the selected assistant service.")
+        except RuntimeError as exc:
+            message = str(exc)
+            status = 503 if "not configured" in message.lower() else 502
+            raise HTTPException(status_code=status, detail="The selected JARVIS model is unavailable. Choose another model or try again.")
+
+    # AUTO races every configured provider. The first complete, non-empty answer wins.
+    # Providers without server-side keys are excluded before any request is sent.
+    available = []
+    if os.getenv("GROQ_API_KEY", "").strip():
+        available.append("v1")
+    if os.getenv("NVIDIA_API_KEY", "").strip():
+        available.append("v2")
+    if GEMINI_API_KEY:
+        available.append("v3")
+    if os.getenv("OPENROUTER_API_KEY", "").strip():
+        available.append("v4")
+    if not available:
+        raise HTTPException(status_code=503, detail="No JARVIS assistant models are configured yet.")
+
+    tasks = {asyncio.create_task(_call_model_provider(req, model)): model for model in available}
+    failures = []
     try:
-        async with httpx.AsyncClient(timeout=180) as client:
-            for model_index, model_name in enumerate(models_to_try):
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+        pending = set(tasks)
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                model = tasks[task]
                 try:
-                    response = await client.post(
-                        url,
-                        params={"key": GEMINI_API_KEY},
-                        json=payload,
-                    )
-                except httpx.TimeoutException:
-                    last_provider_error = f"{model_name} timed out."
-                    print(f"Gemini model {model_name} timed out.")
-                    if model_index < len(models_to_try) - 1:
-                        continue
-                    raise HTTPException(status_code=504, detail="JARVIS is taking too long to respond. Please try again.")
-
-                if response.status_code >= 400:
-                    try:
-                        error_data = response.json().get("error", {})
-                        detail = error_data.get("message", "AI provider rejected the request.")
-                        error_status = error_data.get("status", "unknown")
-                    except Exception:
-                        detail, error_status = "AI provider rejected the request.", "unknown"
-                    last_provider_error = detail
-                    is_temporary = (
-                        response.status_code in (429, 500, 502, 503, 504)
-                        or error_status in ("RESOURCE_EXHAUSTED", "UNAVAILABLE", "INTERNAL")
-                    )
-                    print(f"Gemini model {model_name} failed: HTTP {response.status_code}; status={error_status}; detail={detail[:1000]}")
-                    if is_temporary and model_index < len(models_to_try) - 1:
-                        print(f"Switching JARVIS to Gemini fallback model {models_to_try[model_index + 1]}.")
-                        continue
-                    raise HTTPException(status_code=502, detail="JARVIS could not complete that response. Please try again.")
-
-                data = response.json()
-                candidates = data.get("candidates", [])
-                parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
-                answer = "".join(part.get("text", "") for part in parts).strip()
-                if answer:
-                    if model_name != GEMINI_MODEL:
-                        print(f"JARVIS response successfully generated using fallback model {model_name}.")
-                    return {"response": answer}
-                last_provider_error = "The AI provider returned an empty response."
-                print(f"Gemini model {model_name} returned no text: {json.dumps(data, ensure_ascii=False)[:2000]}")
-                if model_index < len(models_to_try) - 1:
-                    continue
-                raise HTTPException(status_code=502, detail=last_provider_error)
-        raise HTTPException(status_code=502, detail="JARVIS could not complete that response. Please try again.")
-    except HTTPException:
-        raise
-    except httpx.HTTPError:
-        raise HTTPException(status_code=502, detail="JARVIS could not reach its assistant service.")
+                    answer = task.result()
+                    if answer.strip():
+                        for other in pending:
+                            other.cancel()
+                        return {"response": answer, "model_choice": model, "selection": "auto"}
+                except Exception as exc:
+                    failures.append(f"{model}: {type(exc).__name__}")
+        raise HTTPException(status_code=502, detail="All configured JARVIS models are temporarily unavailable. Please try again.")
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 class VoiceRequest(BaseModel):
     text: str = Field(min_length=1, max_length=6000)
