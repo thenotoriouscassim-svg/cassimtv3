@@ -9,10 +9,18 @@ class MainScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
+    return Scaffold(
       backgroundColor: JarvisColors.background,
-      body: SafeArea(
-        child: Column(
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF101923), JarvisColors.background, Color(0xFF080D12)],
+            stops: [0, .42, 1],
+          ),
+        ),
+        child: const Column(
           children: [
             StatusBarWidget(),
             Expanded(child: ConversationPanel()),
