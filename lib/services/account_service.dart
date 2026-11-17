@@ -10,6 +10,8 @@ class AccountService extends ChangeNotifier {
   bool _ready = false;
   bool _busy = false;
   String? _error;
+  bool _hasRecovery = false;
+  String? _recoveryQuestion;
 
   String? get token => _token;
   String? get username => _username;
@@ -17,6 +19,8 @@ class AccountService extends ChangeNotifier {
   bool get isBusy => _busy;
   bool get isLoggedIn => _token != null && _username != null;
   String? get error => _error;
+  bool get hasRecovery => _hasRecovery;
+  String? get recoveryQuestion => _recoveryQuestion;
 
   AccountService() { _restore(); }
 
@@ -38,15 +42,15 @@ class AccountService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> signUp(String username, String password) => _authenticate('signup', username, password);
+  Future<bool> signUp(String username, String password, String question, String answer) => _authenticate('signup', username, password, question: question, answer: answer);
   Future<bool> login(String username, String password) => _authenticate('login', username, password);
 
-  Future<bool> _authenticate(String action, String username, String password) async {
+  Future<bool> _authenticate(String action, String username, String password, {String? question, String? answer}) async {
     _busy = true; _error = null; notifyListeners();
     try {
       final r = await http.post(Uri.parse('${JarvisStrings.backendUrl}/auth/$action'),
         headers: {'Content-Type':'application/json'},
-        body: jsonEncode({'username':username.trim(),'password':password}))
+        body: jsonEncode({'username':username.trim(),'password':password, if(question != null) 'recovery_question':question, if(answer != null) 'recovery_answer':answer}))
         .timeout(const Duration(seconds:25));
       final data = jsonDecode(r.body) as Map<String,dynamic>;
       if (r.statusCode != 200 && r.statusCode != 201) {
@@ -55,6 +59,7 @@ class AccountService extends ChangeNotifier {
       }
       _token = data['token']?.toString();
       _username = data['user']?['username']?.toString();
+      _hasRecovery = data['user']?['has_recovery'] == true;
       if (_token == null || _username == null) throw Exception('The account server returned an incomplete session.');
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('jarvis_account_token', _token!);
@@ -66,6 +71,46 @@ class AccountService extends ChangeNotifier {
     } finally {
       _busy = false; notifyListeners();
     }
+  }
+
+
+  Future<String?> fetchRecoveryQuestion(String username) async {
+    _busy = true; _error = null; _recoveryQuestion = null; notifyListeners();
+    try {
+      final r = await http.post(Uri.parse('${JarvisStrings.backendUrl}/auth/recovery-question'),
+        headers: {'Content-Type':'application/json'}, body: jsonEncode({'username':username.trim()})).timeout(const Duration(seconds:15));
+      final data = jsonDecode(r.body) as Map<String,dynamic>;
+      if (r.statusCode != 200) { _error = data['detail']?.toString() ?? 'Could not retrieve recovery question.'; return null; }
+      _recoveryQuestion = data['question']?.toString(); return _recoveryQuestion;
+    } catch (_) { _error = 'Could not reach the account server.'; return null; }
+    finally { _busy = false; notifyListeners(); }
+  }
+
+  Future<bool> resetPassword(String username, String answer, String newPassword) async {
+    _busy = true; _error = null; notifyListeners();
+    try {
+      final r = await http.post(Uri.parse('${JarvisStrings.backendUrl}/auth/reset-password'),
+        headers: {'Content-Type':'application/json'},
+        body: jsonEncode({'username':username.trim(),'recovery_answer':answer,'new_password':newPassword})).timeout(const Duration(seconds:20));
+      final data = jsonDecode(r.body) as Map<String,dynamic>;
+      if (r.statusCode != 200) { _error = data['detail']?.toString() ?? 'Password reset failed.'; return false; }
+      return true;
+    } catch (_) { _error = 'Could not reach the account server.'; return false; }
+    finally { _busy = false; notifyListeners(); }
+  }
+
+  Future<bool> setRecoveryQuestion(String question, String answer) async {
+    if (_token == null) return false;
+    _busy = true; _error = null; notifyListeners();
+    try {
+      final r = await http.post(Uri.parse('${JarvisStrings.backendUrl}/auth/set-recovery'),
+        headers: {'Content-Type':'application/json','Authorization':'Bearer $_token'},
+        body: jsonEncode({'recovery_question':question,'recovery_answer':answer})).timeout(const Duration(seconds:15));
+      final data = jsonDecode(r.body) as Map<String,dynamic>;
+      if (r.statusCode != 200) { _error = data['detail']?.toString() ?? 'Could not save recovery question.'; return false; }
+      _hasRecovery = true; return true;
+    } catch (_) { _error = 'Could not reach the account server.'; return false; }
+    finally { _busy = false; notifyListeners(); }
   }
 
   Future<void> logout() async {
