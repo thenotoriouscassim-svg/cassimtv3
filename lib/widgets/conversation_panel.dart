@@ -575,6 +575,31 @@ class _CodeBlock extends StatefulWidget {
 
 class _CodeBlockState extends State<_CodeBlock> {
   bool _copied = false;
+  final ScrollController _codeScroll = ScrollController();
+
+  @override
+  void didUpdateWidget(covariant _CodeBlock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.code.length > oldWidget.code.length) _scrollCodeToBottom();
+  }
+
+  void _scrollCodeToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _codeScroll.hasClients) {
+        _codeScroll.animateTo(
+          _codeScroll.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _codeScroll.dispose();
+    super.dispose();
+  }
 
   Future<void> _copy() async {
     await Clipboard.setData(ClipboardData(text: widget.code));
@@ -633,16 +658,22 @@ class _CodeBlockState extends State<_CodeBlock> {
             ),
           ),
           Divider(height: 1, color: _C.textDim.withOpacity(.35)),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.all(14),
-            child: SelectableText(
-              widget.code,
-              style: const TextStyle(
-                color: Color(0xFFD5E7F2),
-                fontFamily: 'monospace',
-                fontSize: 12.5,
-                height: 1.6,
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 420),
+            child: SingleChildScrollView(
+              controller: _codeScroll,
+              padding: const EdgeInsets.all(14),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SelectableText(
+                  widget.code,
+                  style: const TextStyle(
+                    color: Color(0xFFD5E7F2),
+                    fontFamily: 'monospace',
+                    fontSize: 12.5,
+                    height: 1.6,
+                  ),
+                ),
               ),
             ),
           ),
