@@ -93,6 +93,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   bool _handlingTurn = false, _startingListen = false;
   bool _restartInProgress = false, _holdListening = false;
   String _heard = '', _status = 'Connecting…';
+  String? _speechLocale;
   Timer? _silenceTimer, _restartTimer, _finalizeTimer;
   DateTime? _lastListenStarted;
 
@@ -159,7 +160,17 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
             }
           },
         );
-        if (_available) break;
+        if (_available) {
+          try {
+            final locales = await _speech.locales();
+            final southAfrican = locales.where((locale) =>
+                locale.localeId.toLowerCase().replaceAll('-', '_') == 'en_za');
+            if (southAfrican.isNotEmpty) _speechLocale = southAfrican.first.localeId;
+          } catch (error) {
+            debugPrint('JARVIS could not load speech locales: $error');
+          }
+          break;
+        }
       } catch (error) {
         lastError = error;
         debugPrint('JARVIS Call init attempt ${attempt + 1} failed: $error');
@@ -204,6 +215,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         },
         listenFor: const Duration(seconds: 60),
         pauseFor: const Duration(seconds: 8),
+        localeId: _speechLocale,
         partialResults: true,
         cancelOnError: false,
         listenMode: stt.ListenMode.dictation,
