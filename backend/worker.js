@@ -574,8 +574,34 @@ async function loadAccountMemory(request, env, currentMessage = "") {
 }
 async function handle(request, env) {
   const url = new URL(request.url);
+  const pathname = url.pathname.replace(/\\/+$/, "") || "/";
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
-  if (request.method === "GET" && url.pathname === "/") return json({ name: "JARVIS AI by CassimTV", status: "online" });
+  if (request.method === "GET" && pathname === "/") return json({ name: "JARVIS AI by CassimTV", status: "online" });
+  if (request.method === "GET" && (pathname === "/diagnostics" || pathname === "/api/diagnostics")) {
+    let database = "offline";
+    try {
+      if (env.DB) {
+        const check = await env.DB.prepare("SELECT 1 AS ok").first();
+        database = check?.ok === 1 ? "online" : "error";
+      } else database = "not_configured";
+    } catch (e) { console.error("JARVIS diagnostics database check failed:", e?.message || e); }
+    const modules = {
+      cloudflare_worker: { status: "online", detail: "This Worker responded to the diagnostic request." },
+      database: { status: database, detail: database === "online" ? "D1 query succeeded." : "D1 query did not succeed." },
+      authentication: { status: database === "online" ? "available" : "degraded", detail: "Account endpoints depend on the D1 database." },
+      chat_memory_sync: { status: database === "online" ? "available" : "degraded", detail: "Cloud chat and memory storage depend on D1." },
+      ai_gemini: { status: configured(env, "GEMINI_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no model inference was run." },
+      ai_groq: { status: configured(env, "GROQ_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no model inference was run." },
+      ai_nvidia: { status: configured(env, "NVIDIA_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no model inference was run." },
+      ai_openrouter: { status: configured(env, "OPENROUTER_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no model inference was run." },
+      coding_standard: { status: configured(env, "ZAI_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no coding request was run." },
+      coding_advanced: { status: configured(env, "NVIDIA_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no coding request was run." },
+      voice_output: { status: configured(env, "FISH_API_KEY") && configured(env, "FISH_AUDIO_VOICE_ID") ? "configured" : "not_configured", detail: "Credentials configured; no audio generation was run." },
+      speech_transcription: { status: configured(env, "GROQ_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no transcription was run." },
+      web_search: { status: "available", detail: "RSS search is enabled; a live search was not run." }
+    };
+    return json({ status: "online", checked_at: new Date().toISOString(), modules });
+  }
   if (url.pathname.startsWith("/auth/")) {
     try { const response = await authRoutes(request, env, url.pathname); if (response) return response; }
     catch (e) { console.error("JARVIS auth error:", e?.stack || e); return error("Account service encountered an error. Please retry.",500); }
