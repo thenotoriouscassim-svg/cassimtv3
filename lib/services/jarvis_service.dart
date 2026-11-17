@@ -616,8 +616,9 @@ class JarvisService extends ChangeNotifier {
     final isAdvanced = selected == 'advanced' || selected == 'advanced code' || selected == 'advanced coding' || selected == 'deepseek';
     final isStandard = selected == 'standard' || selected == 'standard code' || selected == 'standard coding' || selected == 'normal' || selected == 'basic';
     if (!isStandard && !isAdvanced) {
-      _addMessage(Message(role: MessageRole.assistant, content: 'Please reply with Standard code or Advanced.', timestamp: DateTime.now()));
-      _startTypingResponse();
+      const prompt = 'Please say Standard code or Advanced.';
+      _addMessage(Message(role: MessageRole.assistant, content: prompt, timestamp: DateTime.now()));
+      if (speakResponse) { await _speakResponse(prompt); } else { _startTypingResponse(); }
       return;
     }
     final mode = isAdvanced ? 'advanced' : 'standard';
@@ -683,8 +684,9 @@ class JarvisService extends ChangeNotifier {
       _pendingCodingPrompt = text;
       _pendingCodingMemoryContext = memoryContext;
       _pendingCodingHistory = List<Map<String, String>>.from(history);
-      _addMessage(Message(role: MessageRole.assistant, content: 'Standard code or Advanced?', timestamp: DateTime.now()));
-      _startTypingResponse();
+      const prompt = 'Would you like Standard code or Advanced?';
+      _addMessage(Message(role: MessageRole.assistant, content: prompt, timestamp: DateTime.now()));
+      if (speakResponse) { await _speakResponse(prompt); } else { _startTypingResponse(); }
       return;
     }
 
