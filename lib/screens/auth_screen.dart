@@ -148,3 +148,63 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 }
+
+
+class RecoverySetupScreen extends StatefulWidget {
+  const RecoverySetupScreen({super.key});
+  @override State<RecoverySetupScreen> createState() => _RecoverySetupScreenState();
+}
+class _RecoverySetupScreenState extends State<RecoverySetupScreen> {
+  final _answer = TextEditingController();
+  String _question = 'first_school';
+  static const _questions = <String,String>{
+    'first_school':'What was the name of your first school?',
+    'childhood_friend':'What was the first name of your childhood best friend?',
+    'first_pet':'What was the name of your first pet?',
+    'birth_city':'In which city were you born?',
+    'favourite_teacher':'What was the surname of a favourite teacher?',
+  };
+  @override void dispose() { _answer.dispose(); super.dispose(); }
+  @override Widget build(BuildContext context) {
+    final account=context.watch<AccountService>();
+    return Scaffold(backgroundColor:JarvisColors.background,
+      body:Center(child:SingleChildScrollView(padding:const EdgeInsets.all(24),
+        child:ConstrainedBox(constraints:const BoxConstraints(maxWidth:420),
+          child:Container(padding:const EdgeInsets.all(28),
+            decoration:BoxDecoration(color:JarvisColors.surface,borderRadius:BorderRadius.circular(22),
+              border:Border.all(color:JarvisColors.cyan.withOpacity(.3))),
+            child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+              const Icon(Icons.security_rounded,color:JarvisColors.cyan,size:46),
+              const SizedBox(height:16),
+              const Text('Secure your JARVIS account',textAlign:TextAlign.center,
+                style:TextStyle(color:JarvisColors.textPrimary,fontSize:20,fontWeight:FontWeight.bold)),
+              const SizedBox(height:10),
+              const Text('Before continuing, set a recovery question. You will need it to reset your password if you forget it.',
+                textAlign:TextAlign.center,style:TextStyle(color:JarvisColors.textDim,fontSize:12,height:1.5)),
+              const SizedBox(height:22),
+              DropdownButtonFormField<String>(value:_question,isExpanded:true,dropdownColor:JarvisColors.surface,
+                style:const TextStyle(color:JarvisColors.textPrimary),decoration:const InputDecoration(labelText:'Recovery question'),
+                items:_questions.entries.map((e)=>DropdownMenuItem(value:e.key,child:Text(e.value,overflow:TextOverflow.ellipsis))).toList(),
+                onChanged:(v){if(v!=null)setState(()=>_question=v);}),
+              const SizedBox(height:14),
+              TextField(controller:_answer,autocorrect:false,enableSuggestions:false,
+                style:const TextStyle(color:JarvisColors.textPrimary),
+                decoration:const InputDecoration(labelText:'Your recovery answer',prefixIcon:Icon(Icons.lock_outline))),
+              if(account.error!=null)...[
+                const SizedBox(height:12),
+                Text(account.error!,style:const TextStyle(color:JarvisColors.red,fontSize:12)),
+              ],
+              const SizedBox(height:20),
+              SizedBox(height:50,child:ElevatedButton(onPressed:account.isBusy?null:()async{
+                final ok=await account.setRecoveryQuestion(_question,_answer.text);
+                if(ok && context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Recovery question saved. Your account is secured.')));
+              },style:ElevatedButton.styleFrom(backgroundColor:JarvisColors.cyan,foregroundColor:JarvisColors.background),
+                child:account.isBusy?const SizedBox(width:20,height:20,child:CircularProgressIndicator(strokeWidth:2)):
+                  const Text('SAVE AND CONTINUE',style:TextStyle(fontWeight:FontWeight.bold,letterSpacing:1.5)))),
+            ]),
+          ),
+        ),
+      )),
+    );
+  }
+}
