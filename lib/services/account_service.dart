@@ -33,8 +33,22 @@ class AccountService extends ChangeNotifier {
       try {
         final r = await http.get(Uri.parse('${JarvisStrings.backendUrl}/auth/me'),
           headers: {'Authorization': 'Bearer $_token'}).timeout(const Duration(seconds: 15));
-        if (r.statusCode != 200) { _token = null; _username = null; await prefs.remove('jarvis_account_token'); await prefs.remove('jarvis_account_username'); }
-        else { final data = jsonDecode(r.body) as Map<String,dynamic>; _username = data['user']?['username']?.toString() ?? _username; _hasRecovery = data['user']?['has_recovery'] == true; await prefs.setBool('jarvis_has_recovery', _hasRecovery); }
+        if (r.statusCode == 200) {
+          final data = jsonDecode(r.body) as Map<String,dynamic>;
+          _username = data['user']?['username']?.toString() ?? _username;
+          _hasRecovery = data['user']?['has_recovery'] == true;
+          await prefs.setBool('jarvis_has_recovery', _hasRecovery);
+        } else if (r.statusCode == 401 || r.statusCode == 403) {
+          // Only clear a saved session when the server explicitly says it is invalid.
+          _token = null;
+          _username = null;
+          await prefs.remove('jarvis_account_token');
+          await prefs.remove('jarvis_account_username');
+        } else {
+          // A 404, 5xx, or other server problem is not proof that the user's session expired.
+          // Keep the locally saved session so a temporary deployment/API issue doesn't force login.
+          debugPrint('JARVIS session validation returned HTTP ${r.statusCode}; keeping saved session.');
+        }
       } catch (_) {
         // Keep a previously issued token during a temporary network outage.
       }
