@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "jarvis-ai-cassimtv"
 version = "1.0.0"
@@ -7,6 +11,13 @@ dependencies = [
     "fastapi>=0.115,<1.0",
     "httpx>=0.27,<1.0",
 ]
+
+[tool.setuptools]
+py-modules = ["worker", "cloud_main", "main"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["actions*", "intelligence*"]
 
 [dependency-groups]
 dev = [
