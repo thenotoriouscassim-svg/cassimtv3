@@ -18,6 +18,7 @@ class JarvisService extends ChangeNotifier {
   SystemStats _systemStats = SystemStats.empty();
   String _statusText = JarvisStrings.standby;
   bool _isConnected = false;
+  bool _lastSpeechSucceeded = false;
   bool _typingResponse = false;
   static const MethodChannel _deviceChannel = MethodChannel('jarvis/device');
   final ShizukuApi _shizuku = ShizukuApi();
@@ -39,6 +40,7 @@ class JarvisService extends ChangeNotifier {
   SystemStats get systemStats => _systemStats;
   String get statusText => _statusText;
   bool get isConnected => _isConnected;
+  bool get lastSpeechSucceeded => _lastSpeechSucceeded;
   bool get isTypingResponse => _typingResponse;
 
   String get selectedModel => _selectedModel;
@@ -308,6 +310,7 @@ class JarvisService extends ChangeNotifier {
   }
 
   Future<void> _speakResponse(String text) async {
+    _lastSpeechSucceeded = false;
     final speakable = _makeSpeakable(text);
     if (speakable.isEmpty) return;
     final spokenText = speakable.length > 6000 ? speakable.substring(0, 6000) : speakable;
@@ -328,6 +331,7 @@ class JarvisService extends ChangeNotifier {
         final completed = _ttsPlayer.onPlayerComplete.first;
         await _ttsPlayer.play(BytesSource(response.bodyBytes));
         await completed.timeout(const Duration(minutes: 2));
+        _lastSpeechSucceeded = true;
       } finally {
         _setState(JarvisState.standby);
       }
@@ -629,6 +633,7 @@ class JarvisService extends ChangeNotifier {
   }
   Future<void> sendTextMessage(String text, {bool speakResponse = false, String memoryContext = ''}) async {
     if (text.trim().isEmpty) return;
+    if (speakResponse) _lastSpeechSucceeded = false;
     if (_pendingCodingPrompt != null) {
       await _chooseCodingMode(text, speakResponse: speakResponse);
       return;
