@@ -7,7 +7,6 @@ import '../screens/call_screen.dart';
 
 class InputBar extends StatefulWidget {
   const InputBar({super.key});
-
   @override
   State<InputBar> createState() => _InputBarState();
 }
@@ -15,7 +14,6 @@ class InputBar extends StatefulWidget {
 class _InputBarState extends State<InputBar> {
   final _controller = TextEditingController();
   bool _hasText = false;
-
 
   @override
   void initState() {
@@ -25,10 +23,8 @@ class _InputBarState extends State<InputBar> {
 
   void _handleTextChanged() {
     if (!mounted) return;
-    final hasText = _controller.text.trim().isNotEmpty;
-    if (hasText != _hasText) {
-      setState(() => _hasText = hasText);
-    }
+    final value = _controller.text.trim().isNotEmpty;
+    if (value != _hasText) setState(() => _hasText = value);
   }
 
   @override
@@ -49,113 +45,118 @@ class _InputBarState extends State<InputBar> {
   @override
   Widget build(BuildContext context) {
     final jarvis = context.watch<JarvisService>();
-
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
       decoration: BoxDecoration(
-        color: JarvisColors.surface,
-        border: Border(top: BorderSide(color: JarvisColors.border)),
+        color: JarvisColors.background,
+        border: Border(top: BorderSide(color: JarvisColors.border.withOpacity(.7))),
       ),
-      child: Row(
-        children: [
-          // Text input and recognized speech.
-          Expanded(
-            child: Container(
-              height: 44,
-              decoration: BoxDecoration(
-                color: JarvisColors.surfaceLight,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: JarvisColors.border),
-              ),
-              child: TextField(
-                controller: _controller,
-                style: const TextStyle(
-                  color: JarvisColors.textPrimary,
-                  fontSize: 13,
-                  fontFamily: 'Orbitron',
+      child: SafeArea(
+        top: false,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: AnimatedContainer(
+                duration: JarvisDurations.fast,
+                constraints: const BoxConstraints(minHeight: 54),
+                decoration: BoxDecoration(
+                  color: JarvisColors.surface,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: _hasText ? JarvisColors.cyan.withOpacity(.55) : JarvisColors.border),
+                  boxShadow: _hasText ? [BoxShadow(color: JarvisColors.cyan.withOpacity(.07), blurRadius: 18)] : null,
                 ),
-                decoration: InputDecoration(
-                  hintText: jarvis.isConnected
-                      ? 'Ask JARVIS anything...'
-                      : 'Backend offline — type to queue',
-                  hintStyle: TextStyle(
-                    color: JarvisColors.textDim,
-                    fontSize: 11,
-                    fontFamily: 'Orbitron',
-                  ),
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 16),
+                    Icon(Icons.auto_awesome, size: 18, color: _hasText ? JarvisColors.cyan : JarvisColors.textDim),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: _controller,
+                        minLines: 1,
+                        maxLines: 5,
+                        textCapitalization: TextCapitalization.sentences,
+                        style: const TextStyle(color: JarvisColors.textPrimary, fontSize: 14, height: 1.4),
+                        decoration: InputDecoration(
+                          hintText: jarvis.isConnected ? 'Message JARVIS…' : 'Connecting to JARVIS…',
+                          hintStyle: const TextStyle(color: JarvisColors.textDim, fontSize: 13),
+                          border: InputBorder.none,
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 15),
+                        ),
+                        onSubmitted: (_) => _send(jarvis),
+                        textInputAction: TextInputAction.send,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Search the web',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: _hasText ? () {
+                        final query = _controller.text.trim();
+                        FocusScope.of(context).unfocus();
+                        jarvis.searchWeb(query);
+                        _controller.clear();
+                      } : null,
+                      icon: Icon(Icons.travel_explore_rounded, size: 19, color: _hasText ? JarvisColors.cyan : JarvisColors.textDim),
+                    ),
+                    const SizedBox(width: 5),
+                  ],
                 ),
-                onSubmitted: (_) => _send(jarvis),
-                textInputAction: TextInputAction.send,
               ),
             ),
-          ),
-          const SizedBox(width: 10),
-
-          // Dedicated live web-search tool. This does not alter normal chat.
-          IconButton(
-            tooltip: 'Search the live web',
-            onPressed: _hasText
-                ? () {
-                    final query = _controller.text.trim();
-                    if (query.isEmpty) return;
-                    FocusScope.of(context).unfocus();
-                    jarvis.searchWeb(query);
-                    _controller.clear();
-                  }
-                : null,
-            icon: Icon(
-              Icons.travel_explore,
-              color: _hasText ? JarvisColors.cyan : JarvisColors.textDim,
-              size: 21,
+            const SizedBox(width: 9),
+            _ActionButton(
+              icon: Icons.mic_none_rounded,
+              color: JarvisColors.cyan,
+              tooltip: 'Call JARVIS',
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CallScreen())),
             ),
-          ),
-
-          IconButton(
-            tooltip: 'Call JARVIS',
-            onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CallScreen())),
-            icon: const Icon(Icons.call, color: JarvisColors.green, size: 22),
-          ),
-          const SizedBox(width: 4),
-
-          // Send button.
-          GestureDetector(
-            onTap: _hasText ? () => _send(jarvis) : null,
-            child: AnimatedContainer(
-              duration: JarvisDurations.fast,
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: _hasText
-                    ? JarvisColors.cyan.withOpacity(0.15)
-                    : Colors.transparent,
-                border: Border.all(
-                  color: _hasText ? JarvisColors.cyan : JarvisColors.border,
-                  width: 1.5,
-                ),
-                boxShadow: _hasText
-                    ? [
-                        BoxShadow(
-                          color: JarvisColors.cyan.withOpacity(0.3),
-                          blurRadius: 10,
-                        )
-                      ]
-                    : null,
-              ),
-              child: Icon(
-                Icons.send,
-                color: _hasText ? JarvisColors.cyan : JarvisColors.textDim,
-                size: 18,
-              ),
+            const SizedBox(width: 8),
+            _ActionButton(
+              icon: Icons.arrow_upward_rounded,
+              color: Colors.white,
+              filled: true,
+              enabled: _hasText,
+              tooltip: 'Send message',
+              onTap: _hasText ? () => _send(jarvis) : null,
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
+}
+
+class _ActionButton extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String tooltip;
+  final VoidCallback? onTap;
+  final bool filled;
+  final bool enabled;
+  const _ActionButton({required this.icon, required this.color, required this.tooltip, required this.onTap, this.filled = false, this.enabled = true});
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: tooltip,
+    child: Material(
+      color: filled
+          ? (enabled ? JarvisColors.cyan : JarvisColors.surfaceLight)
+          : JarvisColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(17),
+        side: BorderSide(color: filled ? Colors.transparent : JarvisColors.border),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(17),
+        child: SizedBox(
+          width: 52,
+          height: 54,
+          child: Icon(icon, color: filled ? (enabled ? JarvisColors.background : JarvisColors.textDim) : color, size: 22),
+        ),
+      ),
+    ),
+  );
 }
