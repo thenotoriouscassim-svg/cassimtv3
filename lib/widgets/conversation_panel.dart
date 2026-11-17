@@ -636,24 +636,6 @@ class _CodeBlockState extends State<_CodeBlock> {
                     letterSpacing: 1.2,
                   ),
                 ),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: _copy,
-                  icon: Icon(
-                    _copied ? Icons.check_rounded : Icons.copy_rounded,
-                    size: 14,
-                  ),
-                  label: Text(_copied ? 'COPIED' : 'COPY'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: _copied ? _C.green : _C.textMid,
-                    textStyle: _exo(
-                      fontSize: 9,
-                      weight: FontWeight.w700,
-                      letterSpacing: 1,
-                    ),
-                    visualDensity: VisualDensity.compact,
-                  ),
-                ),
               ],
             ),
           ),
@@ -673,6 +655,30 @@ class _CodeBlockState extends State<_CodeBlock> {
                     fontSize: 12.5,
                     height: 1.6,
                   ),
+                ),
+              ),
+            ),
+          ),
+          Divider(height: 1, color: _C.textDim.withOpacity(.35)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: _copy,
+                icon: Icon(
+                  _copied ? Icons.check_rounded : Icons.copy_rounded,
+                  size: 14,
+                ),
+                label: Text(_copied ? 'COPIED' : 'COPY'),
+                style: TextButton.styleFrom(
+                  foregroundColor: _copied ? _C.green : _C.textMid,
+                  textStyle: _exo(
+                    fontSize: 9,
+                    weight: FontWeight.w700,
+                    letterSpacing: 1,
+                  ),
+                  visualDensity: VisualDensity.compact,
                 ),
               ),
             ),
