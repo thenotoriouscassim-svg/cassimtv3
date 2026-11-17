@@ -33,6 +33,9 @@ class JarvisService extends ChangeNotifier {
   int _retryTicks = 0;
   final List<Map<String, dynamic>> _chatSessions = [];
   String _activeChatId = '';
+  String? _accountToken;
+  Map<String, String> get _accountHeaders => _accountToken == null ? const {} : {'Authorization': 'Bearer $_accountToken'};
+  Future<void> setAccountToken(String token) async { _accountToken = token; notifyListeners(); }
   List<Map<String, dynamic>> get savedChats => _chatSessions.map((c) => Map<String, dynamic>.from(c)).toList();
   String get activeChatId => _activeChatId;
 
@@ -70,6 +73,7 @@ class JarvisService extends ChangeNotifier {
   Future<void> _initialize() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      _accountToken = prefs.getString('jarvis_account_token');
       final savedUrl = prefs.getString('backend_url');
       final savedModel = prefs.getString('jarvis_selected_model');
       if (savedModel != null && {'auto', 'v1', 'v2', 'v3', 'v4'}.contains(savedModel)) {
@@ -165,7 +169,7 @@ class JarvisService extends ChangeNotifier {
       final response = await http
           .post(
             Uri.parse('$_backendUrl/search'),
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', ..._accountHeaders},
             body: jsonEncode({'query': cleanQuery}),
           )
           .timeout(const Duration(seconds: 270));
@@ -566,6 +570,7 @@ class JarvisService extends ChangeNotifier {
     try {
       final request = http.Request('POST', Uri.parse('$_backendUrl/code'))
         ..headers['Content-Type'] = 'application/json'
+        ..headers.addAll(_accountHeaders)
         ..body = jsonEncode({
           'message': fullPrompt,
           'conversation_history': history,
@@ -709,7 +714,7 @@ class JarvisService extends ChangeNotifier {
       final response = await http
           .post(
             Uri.parse('$_backendUrl/chat'),
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', ..._accountHeaders},
             body: jsonEncode({
               'message': memoryContext.trim().isEmpty ? text : '${memoryContext.trim()}\n\nCurrent user message: $text',
               'conversation_history': speakResponse
