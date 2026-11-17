@@ -23,6 +23,9 @@ The Workers Builds project should connect to the GitHub repository
 Add these under the Worker **Settings → Variables and Secrets** as encrypted secrets:
 
 - `GEMINI_API_KEY` — required for normal chat and Gemini web search
+- `GROQ_API_KEY` — optional JARVIS v1
+- `NVIDIA_API_KEY` — optional JARVIS v2
+- `OPENROUTER_API_KEY` — optional JARVIS v4
 - `ZAI_API_KEY` — required for the separate coding endpoint
 - `FISH_API_KEY` — required for speech generation
 - `FISH_AUDIO_VOICE_ID` — required for the selected JARVIS voice
@@ -30,6 +33,7 @@ Add these under the Worker **Settings → Variables and Secrets** as encrypted s
 Optional non-secret variable:
 
 - `FISH_AUDIO_MODEL` — defaults to `s2.1-pro-free`
+- `GROQ_MODEL`, `NVIDIA_MODEL`, `OPENROUTER_MODEL` — optional model overrides
 
 Do not put API keys in `wrangler.jsonc`, GitHub commits, or chat messages.
 The Worker entrypoint bridges Cloudflare's `workers.env` bindings into the
@@ -40,7 +44,8 @@ shared backend configuration before importing the FastAPI app.
 - Render continues using `requirements.txt` and `psutil`; the Render deployment is not replaced by these files.
 - Cloudflare Workers does not expose host CPU, RAM, or disk counters. The shared `/stats` route returns null for those fields on Workers rather than inventing values.
 - The Android device bridge remains on the phone and is unchanged.
-- The normal `/chat` route remains on the existing Gemini Flash-Lite configuration. The separate `/code` route remains the Z.ai coding endpoint.
+- The `/chat` route accepts JARVIS v1 (Groq), v2 (NVIDIA), v3 (existing Gemini Flash-Lite), v4 (OpenRouter), or `auto` (first successful configured provider). The separate `/code` route remains the Z.ai coding endpoint.
+- `auto` sends the same request concurrently to every configured provider and returns the first complete successful answer. This can consume more than one provider request per user message.
 - Test `/health`, `/chat`, `/code`, `/search`, and `/tts` before changing the Android app's backend URL.
 
 ## Free-plan limitation
