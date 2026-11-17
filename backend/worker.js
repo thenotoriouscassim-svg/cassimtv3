@@ -207,6 +207,32 @@ async function code(req, env) {
   }
   return error(`The standard coding service failed: ${last || "temporarily unavailable"}`, 502);
 }
+async function transcribe(request, env) {
+  if (!configured(env, "GROQ_API_KEY")) return error("Speech transcription is not configured.", 503);
+  let form;
+  try { form = await request.formData(); } catch { return error("A valid audio recording is required.", 400); }
+  const audio = form.get("file");
+  if (!audio || typeof audio === "string" || typeof audio.arrayBuffer !== "function") return error("No audio recording was uploaded.", 422);
+  if (audio.size < 1000) return error("The recording is too short or empty.", 422);
+  if (audio.size > 24 * 1024 * 1024) return error("Recording is too large. Keep recordings under three minutes.", 413);
+  const upstreamForm = new FormData();
+  upstreamForm.append("file", audio, "jarvis-recording.m4a");
+  upstreamForm.append("model", "whisper-large-v3-turbo");
+  upstreamForm.append("language", "en");
+  upstreamForm.append("response_format", "json");
+  try {
+    const upstream = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+      method: "POST", headers: { Authorization: "Bearer " + env.GROQ_API_KEY },
+      body: upstreamForm, signal: AbortSignal.timeout(120000)
+    });
+    const data = await upstream.json().catch(() => ({}));
+    if (!upstream.ok) return error("Speech transcription service returned HTTP " + upstream.status + ": " + (data.error?.message || "request failed"), upstream.status === 429 ? 503 : 502);
+    const transcript = String(data.text || "").trim();
+    if (!transcript) return error("No speech was detected in the recording.", 422);
+    return json({ text: transcript });
+  } catch (e) { return error("Could not transcribe the recording: " + String(e.message || e), 502); }
+}
+
 async function tts(req, env) {
   if (!configured(env, "FISH_API_KEY") || !configured(env, "FISH_AUDIO_VOICE_ID"))
     return error("Fish Audio voice is not configured.", 503);
@@ -295,8 +321,10 @@ async function handle(request, env) {
   ], coding: { standard_configured: configured(env, "ZAI_API_KEY"), standard_model: env.ZAI_CODE_MODEL || "glm-4.6", advanced_configured: configured(env, "NVIDIA_API_KEY"), advanced_model: env.NVIDIA_DEEPSEEK_CODE_MODEL || "deepseek-ai/deepseek-v4.1-flash" } });
   if (request.method === "GET" && url.pathname === "/stats") return json({ cpu_percent: null, ram_used_gb: null, ram_total_gb: null, ram_percent: null, storage_used_gb: null, storage_total_gb: null, storage_percent: null, cpu_temp: null, battery_percent: null, network_status: "connected", platform: "Cloudflare Workers", uptime_seconds: null });
   if (request.method !== "POST") return error("Not found.", 404);
+  if (request.method === "POST" && url.pathname === "/transcribe") return transcribe(request, env);
   let req;
   try { req = await bodyJson(request); } catch (e) { return error(e.message, 400); }
+  if (url.pathname === "/transcribe") return error("Transcription requires multipart audio.", 400);
   if (url.pathname === "/chat") return chat(req, env);
   if (url.pathname === "/code") return code(req, env);
   if (url.pathname === "/tts") return tts(req, env);
