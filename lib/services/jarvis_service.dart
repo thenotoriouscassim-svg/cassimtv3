@@ -34,6 +34,7 @@ class JarvisService extends ChangeNotifier {
   final List<Map<String, dynamic>> _chatSessions = [];
   String _activeChatId = '';
   String? _accountToken;
+  final Set<String> _cloudChatIds = {};
   Map<String, String> get _accountHeaders => _accountToken == null ? const {} : {'Authorization': 'Bearer $_accountToken'};
   Future<void> setAccountToken(String token) async { _accountToken = token; notifyListeners(); }
   List<Map<String, dynamic>> get savedChats => _chatSessions.map((c) => Map<String, dynamic>.from(c)).toList();
@@ -102,9 +103,12 @@ class JarvisService extends ChangeNotifier {
       }
     }
     // Always open into a clean chat. Old sessions stay saved for chat history.
-    _activeChatId = DateTime.now().microsecondsSinceEpoch.toString();
-    _conversation.clear();
-    _chatSessions.insert(0, {'id': _activeChatId, 'title': 'New chat', 'messages': <dynamic>[]});
+    if (_accountToken != null) await _loadCloudChats();
+    if (_chatSessions.isEmpty) {
+      _activeChatId = DateTime.now().microsecondsSinceEpoch.toString();
+      _conversation.clear();
+      _chatSessions.insert(0, {'id': _activeChatId, 'title': 'New chat', 'messages': <dynamic>[]});
+    }
     await _persistChats();
     notifyListeners();
   }
@@ -115,6 +119,69 @@ class JarvisService extends ChangeNotifier {
     }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('jarvis_chat_sessions', jsonEncode(_chatSessions));
+    await _syncCurrentChat();
+  }
+
+
+  Future<void> _loadCloudChats() async {
+    try {
+      final response = await http.get(Uri.parse(_backendUrl + '/chats'), headers: _accountHeaders).timeout(const Duration(seconds: 25));
+      if (response.statusCode != 200) return;
+      final rows = (jsonDecode(response.body)['chats'] as List<dynamic>? ?? []);
+      final loaded = <Map<String,dynamic>>[];
+      _cloudChatIds.clear();
+      for (final row in rows) {
+        if (row is! Map) continue;
+        final id = row['id']?.toString() ?? '';
+        if (id.isEmpty) continue;
+        final detail = await http.get(Uri.parse(_backendUrl + '/chats/' + id), headers: _accountHeaders).timeout(const Duration(seconds: 20));
+        if (detail.statusCode != 200) continue;
+        final data = jsonDecode(detail.body) as Map<String,dynamic>;
+        final messages = (data['messages'] as List<dynamic>? ?? []).map((item) {
+          final map = Map<String,dynamic>.from(item as Map);
+          return Message(
+            role: MessageRole.values.firstWhere((r) => r.name == map['role'], orElse: () => MessageRole.assistant),
+            content: map['content']?.toString() ?? '',
+            timestamp: DateTime.tryParse(map['created_at']?.toString() ?? '') ?? DateTime.now(),
+          ).toJson();
+        }).toList();
+        loaded.add({'id':id,'title':row['title']?.toString() ?? 'Chat','messages':messages});
+        _cloudChatIds.add(id);
+      }
+      if (loaded.isNotEmpty) {
+        _chatSessions..clear()..addAll(loaded);
+        _activeChatId = loaded.first['id'].toString();
+        _conversation
+          ..clear()
+          ..addAll((loaded.first['messages'] as List<dynamic>).whereType<Map>().map((m) => Message.fromJson(Map<String,dynamic>.from(m))));
+      }
+    } catch (e) {
+      debugPrint('JARVIS cloud chat restore failed: ' + e.toString());
+    }
+  }
+
+  Future<void> _syncCurrentChat() async {
+    if (_accountToken == null || _activeChatId.isEmpty) return;
+    final index = _chatSessions.indexWhere((item) => item['id'] == _activeChatId);
+    if (index < 0) return;
+    final chat = _chatSessions[index];
+    try {
+      if (!_cloudChatIds.contains(_activeChatId)) {
+        final created = await http.post(Uri.parse(_backendUrl + '/chats'),
+          headers: {'Content-Type':'application/json', ..._accountHeaders},
+          body: jsonEncode({'id':_activeChatId,'title':chat['title'] ?? 'New chat'})).timeout(const Duration(seconds:20));
+        if (created.statusCode != 201 && created.statusCode != 200) return;
+        _cloudChatIds.add(_activeChatId);
+      }
+      final messages = _conversation.map((m) => {
+        'role':m.role.name,'content':m.content,'timestamp':m.timestamp.toIso8601String()
+      }).toList();
+      await http.put(Uri.parse(_backendUrl + '/chats/' + _activeChatId),
+        headers: {'Content-Type':'application/json', ..._accountHeaders},
+        body: jsonEncode({'title':chat['title'] ?? 'New chat','messages':messages})).timeout(const Duration(seconds:30));
+    } catch (e) {
+      debugPrint('JARVIS cloud chat sync failed: ' + e.toString());
+    }
   }
 
   Future<void> createNewChat() async {
