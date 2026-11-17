@@ -264,7 +264,52 @@ async function search(req, env) {
   if (typeof req.query !== "string" || req.query.trim().length < 2 || req.query.length > 1000) return error("Search query must contain between 2 and 1000 characters.",422);
   const query=req.query.trim(), headers={"User-Agent":"Mozilla/5.0 (compatible; JARVIS-AI/2.0)","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"};
   const candidates=[], errors=[];
-  try {
+  // Preferred path: Gemini's native Google Search grounding. This avoids fragile
+  // HTML scraping and lets Gemini search, compare live pages and return citations.
+  if(configured(env,"GEMINI_API_KEY")){
+    try{
+      const prompt="You are JARVIS, a live web research assistant. Search the web now for: "+query+
+        "\\nUse several relevant, credible and preferably recent sources. Read and compare the available sources before answering. "+
+        "Give a useful original synthesis, not a list of headlines. Distinguish confirmed facts from claims and opinion, "+
+        "include dates where relevant, flag disagreements and uncertainty, and never invent details. Cite sources using the "+
+        "grounded citations supplied by the search system. If the evidence is limited, say so.";
+      const grounded=await fetchJson("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","x-goog-api-key":env.GEMINI_API_KEY},
+        body:JSON.stringify({
+          contents:[{role:"user",parts:[{text:prompt}]}],
+          tools:[{google_search:{}}],
+          generationConfig:{temperature:1,maxOutputTokens:2600}
+        })
+      },65000);
+      const candidate=grounded.candidates?.[0];
+      const groundedAnswer=(candidate?.content?.parts||[]).map(p=>p.text||"").join("").trim();
+      const metadata=candidate?.groundingMetadata||candidate?.grounding_metadata||{};
+      const chunks=metadata.groundingChunks||metadata.grounding_chunks||[];
+      const sources=[];
+      for(const chunk of chunks){
+        const web=chunk.web||chunk;
+        const uri=web.uri||web.url;
+        if(!uri||!/^https?:\\/\\//i.test(uri)||sources.some(s=>s.url===uri)) continue;
+        sources.push({title:web.title||new URL(uri).hostname,publisher:new URL(uri).hostname,published:"",url:uri,snippet:"Retrieved through Google Search grounding.",page_read:true,read_error:null});
+      }
+      if(groundedAnswer&&sources.length){
+        return json({
+          answer:groundedAnswer,
+          sources:sources.slice(0,10),
+          search_queries:metadata.webSearchQueries||metadata.web_search_queries||[query],
+          provider:"Gemini Google Search grounding",
+          pages_read:sources.length,
+          results_found:sources.length
+        });
+      }
+      errors.push("Google Search grounding returned no answer or source citations.");
+    }catch(e){
+      console.error("JARVIS Google Search grounding failed:",e.message);
+      errors.push("Google Search grounding: "+String(e.message||e).slice(0,220));
+    }
+  }
+  try{
     try {
       const url="https://www.bing.com/search?"+new URLSearchParams({q:query,setlang:"en-ZA",cc:"ZA",count:"10"});
       const response=await fetch(url,{headers,signal:AbortSignal.timeout(12000)});
@@ -297,7 +342,7 @@ async function search(req, env) {
       }catch(e){errors.push(feed.provider+": "+String(e.message||e));}
       if(candidates.length>=12) break;
     }
-    if(!candidates.length) throw new Error("No search results were retrieved. "+errors.join("; ").slice(0,250));
+    if(!candidates.length) throw new Error("All live search providers failed to return results. "+errors.join("; ").slice(0,350));
     const pages=await Promise.all(candidates.slice(0,7).map(async article=>{
       try{
         const response=await fetch(article.url,{headers,redirect:"follow",signal:AbortSignal.timeout(10000)});
