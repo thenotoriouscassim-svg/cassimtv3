@@ -260,27 +260,46 @@ async function search(req, env) {
   const query = req.query.trim();
   try {
     const freshness = /\b(latest|today|yesterday|this week|breaking|current|war|conflict|iran|israel|ukraine|usa|united states|election|president|attack|ceasefire|strike|sanction)\b/i.test(query) ? " when:7d" : "";
-    const params = new URLSearchParams({ q: query + freshness, hl: "en-ZA", gl: "ZA", ceid: "ZA:en" });
-    const feedResponse = await fetch("https://news.google.com/rss/search?" + params.toString(), {
-      headers: { "Accept": "application/rss+xml, application/xml, text/xml", "User-Agent": "Mozilla/5.0 JARVIS-AI/1.0" },
-      signal: AbortSignal.timeout(18000)
-    });
-    if (!feedResponse.ok) throw new Error("News search returned HTTP " + feedResponse.status);
-    const xml = await feedResponse.text();
+    const encodedQuery = query + freshness;
+    const feeds = [
+      {
+        provider: "Live News (Google News / Bing News)",
+        url: "https://news.google.com/rss/search?" + new URLSearchParams({ q: encodedQuery, hl: "en-ZA", gl: "ZA", ceid: "ZA:en" })
+      },
+      {
+        provider: "Bing News",
+        url: "https://www.bing.com/news/search?" + new URLSearchParams({ q: query, format: "rss", setlang: "en-ZA", cc: "ZA" })
+      }
+    ];
     const articles = [];
-    for (const match of xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)) {
-      const item = match[1];
-      const title = xmlText(item, "title");
-      let url = xmlText(item, "link");
-      const publisher = xmlText(item, "source") || "News publisher";
-      const published = xmlText(item, "pubDate");
-      const description = xmlText(item, "description").slice(0, 500);
-      if (!title || !url || !/^https?:\/\//i.test(url)) continue;
-      if (articles.some(a => a.title.toLowerCase() === title.toLowerCase())) continue;
-      articles.push({ title, publisher, published, description, url });
+    const feedErrors = [];
+    for (const feed of feeds) {
+      try {
+        const response = await fetch(feed.url, {
+          headers: { "Accept": "application/rss+xml, application/xml, text/xml", "User-Agent": "Mozilla/5.0 (compatible; JARVIS-AI/1.0)" },
+          signal: AbortSignal.timeout(12000)
+        });
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        const xml = await response.text();
+        for (const match of xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)) {
+          const item = match[1];
+          const title = xmlText(item, "title");
+          const url = xmlText(item, "link");
+          const publisher = xmlText(item, "source") || feed.provider;
+          const published = xmlText(item, "pubDate");
+          const description = xmlText(item, "description").slice(0, 500);
+          if (!title || !url || !/^https?:\/\//i.test(url)) continue;
+          if (articles.some(a => a.title.toLowerCase() === title.toLowerCase() || a.url === url)) continue;
+          articles.push({ title, publisher, published, description, url });
+          if (articles.length >= 10) break;
+        }
+      } catch (e) {
+        feedErrors.push(feed.provider + ": " + String(e.message || e));
+        console.error("JARVIS " + feed.provider + " search failed:", e.message);
+      }
       if (articles.length >= 10) break;
     }
-    if (!articles.length) throw new Error("No matching news articles were returned.");
+    if (!articles.length) throw new Error("All live search feeds failed or returned no matching articles. " + feedErrors.join("; ").slice(0, 250));
     const evidence = articles.map((a, i) => `[${i+1}] ${a.title}\nPublisher: ${a.publisher}\nPublished: ${a.published}\nSnippet: ${a.description}\nURL: ${a.url}`).join("\n\n");
     let answer = "";
     if (configured(env, "GEMINI_API_KEY")) {
