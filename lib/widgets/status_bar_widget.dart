@@ -66,6 +66,45 @@ class StatusBarWidget extends StatelessWidget {
           ),
 
           const Spacer(),
+          PopupMenuButton<String>(
+            tooltip: 'Choose JARVIS model',
+            onSelected: jarvis.setSelectedModel,
+            color: JarvisColors.surfaceLight,
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'auto', child: Text('AUTO — Fastest successful model')),
+              PopupMenuItem(value: 'v1', child: Text('JARVIS v1 — Groq')),
+              PopupMenuItem(value: 'v2', child: Text('JARVIS v2 — NVIDIA')),
+              PopupMenuItem(value: 'v3', child: Text('JARVIS v3 — Gemini')),
+              PopupMenuItem(value: 'v4', child: Text('JARVIS v4 — OpenRouter')),
+            ],
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                border: Border.all(color: JarvisColors.cyan.withOpacity(0.7)),
+                borderRadius: BorderRadius.circular(4),
+                color: JarvisColors.cyan.withOpacity(0.08),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.tune, color: JarvisColors.cyan, size: 14),
+                  const SizedBox(width: 6),
+                  Text(
+                    jarvis.selectedModelLabel,
+                    style: const TextStyle(
+                      color: JarvisColors.cyan,
+                      fontSize: 9,
+                      letterSpacing: 1,
+                      fontFamily: 'Orbitron',
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.keyboard_arrow_down, color: JarvisColors.cyan, size: 14),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
           IconButton(tooltip: 'Chat history', onPressed: () => _showChats(context, jarvis), icon: const Icon(Icons.history, color: JarvisColors.cyan, size: 20)),
           IconButton(tooltip: 'JARVIS memory', onPressed: () => _showMemory(context), icon: const Icon(Icons.psychology_alt_outlined, color: JarvisColors.cyan, size: 20)),
 
