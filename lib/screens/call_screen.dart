@@ -202,8 +202,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
           if (mounted) setState(() => _status = _heard.isEmpty ? 'Listening' : 'Got it…');
           if (result.finalResult && _heard.trim().isNotEmpty) _handleTurn(_heard.trim());
         },
-        listenFor: const Duration(seconds: 45),
-        pauseFor: const Duration(seconds: 6),
+        listenFor: const Duration(seconds: 60),
+        pauseFor: const Duration(seconds: 8),
         partialResults: true,
         cancelOnError: false,
         listenMode: stt.ListenMode.dictation,
