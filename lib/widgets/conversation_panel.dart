@@ -12,7 +12,6 @@ class _C {
   static const surface = Color(0xFF0D0D18);
   static const cyan = Color(0xFF00C8FF);
   static const purple = Color(0xFF7B2FFF);
-  static const amber = Color(0xFFFFB347);
   static const red = Color(0xFFFF3B5C);
   static const green = Color(0xFF45D6A2);
   static const textHi = Color(0xFFE8F4FF);
