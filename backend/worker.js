@@ -101,7 +101,7 @@ async function callVoice(req, env) {
         method: "POST",
         headers: { Authorization: `Bearer ${env.GROQ_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: env.GROQ_VOICE_MODEL || "llama-3.1-8b-instant",
+          model: env.GROQ_VOICE_MODEL || "openai/gpt-oss-20b",
           messages: messagesFor(req),
           temperature: 0.5,
           max_tokens: 256,
