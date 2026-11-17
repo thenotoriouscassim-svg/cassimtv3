@@ -535,7 +535,9 @@ class _MessageContentState extends State<_MessageContent> {
       );
 
   Widget _content(String value) {
-    // Match completed and still-streaming fenced blocks so the code panel\n    // appears as soon as the opening fence and first newline arrive.\n    final pattern = RegExp(r'```([a-zA-Z0-9_+-]*)[ \\t]*\\n([\\s\\S]*?)(?:```|$)');
+    // Match completed and still-streaming fenced blocks so the code panel
+    // appears as soon as the opening fence and first newline arrive.
+    final pattern = RegExp(r'```([a-zA-Z0-9_+-]*)[ \\t]*\\n([\\s\\S]*?)(?:```|$)');
     final matches = pattern.allMatches(value).toList();
     if (matches.isEmpty) return _text(value);
 
