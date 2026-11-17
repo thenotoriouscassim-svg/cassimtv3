@@ -33,32 +33,55 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _startCall() async {
-    _available = await _speech.initialize(
-      onStatus: _onSpeechStatus,
-      onError: (error) {
-        if (!mounted || !_active || _holdListening || _busy || _handlingTurn) return;
-        final message = error.errorMsg.toLowerCase();
-        final denied = message.contains('permission') || message.contains('not-allowed');
-        if (denied || error.permanent) {
-          _holdListening = true;
-          _silenceTimer?.cancel();
-          setState(() => _status = denied
-              ? 'Android blocked microphone access. Enable it in Settings > Apps > JARVIS AI > Permissions. If needed, ADB: pm grant com.cassimtv.jarvis_ai android.permission.RECORD_AUDIO'
-              : 'Speech recognition unavailable: ${error.errorMsg}');
-          return;
-        }
-        // Android reports no-match/time-out when a recognition window ends.
-        // These are recoverable session events, not reasons to interrupt the call.
-        if (_heard.trim().isNotEmpty) {
-          _handleTurn(_heard.trim());
-        } else {
-          if (mounted) setState(() => _status = 'Reconnecting microphone…');
-          _scheduleListenRestart();
-        }
-      },
-    );
+    // Android can still be showing the RECORD_AUDIO permission prompt when
+    // Call Mode opens. Give the OS/plugin time to finish that first-run flow,
+    // then retry initialisation instead of leaving Call Mode permanently dead.
+    if (mounted) setState(() => _status = 'Preparing speech recognition…');
+
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (!mounted) return;
+      try {
+        _available = await _speech.initialize(
+          onStatus: _onSpeechStatus,
+          onError: (error) {
+            debugPrint('JARVIS Call speech error: ${error.errorMsg}; permanent=${error.permanent}');
+            if (!mounted || !_active || _holdListening || _busy || _handlingTurn) return;
+            final message = error.errorMsg.toLowerCase();
+            final denied = message.contains('permission') || message.contains('not-allowed');
+            if (denied || error.permanent) {
+              _holdListening = true;
+              _silenceTimer?.cancel();
+              setState(() => _status = denied
+                  ? 'Microphone permission is required. Allow it in Android Settings > Apps > JARVIS AI > Permissions.'
+                  : 'Speech recognition stopped: ${error.errorMsg}');
+              return;
+            }
+            if (_heard.trim().isNotEmpty) {
+              _handleTurn(_heard.trim());
+            } else {
+              if (mounted) setState(() => _status = 'Reconnecting microphone…');
+              _scheduleListenRestart();
+            }
+          },
+        );
+        if (_available) break;
+      } catch (error) {
+        lastError = error;
+        debugPrint('JARVIS Call speech initialisation attempt ${attempt + 1} failed: $error');
+      }
+      if (attempt < 2) {
+        if (mounted) setState(() => _status = 'Waiting for microphone permission…');
+        await Future.delayed(Duration(milliseconds: 700 * (attempt + 1)));
+      }
+    }
+
     if (!_available) {
-      if (mounted) setState(() => _status = 'Speech recognition unavailable. Check microphone permission and Google speech services.');
+      if (mounted) {
+        setState(() => _status = lastError == null
+            ? 'Could not start speech recognition. Close and reopen Call Mode to retry.'
+            : 'Could not start speech recognition: $lastError');
+      }
       return;
     }
     if (mounted) setState(() { _active = true; _status = 'Listening — speak now'; });
