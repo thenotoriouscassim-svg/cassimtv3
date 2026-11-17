@@ -110,6 +110,10 @@ class StatusBarWidget extends StatelessWidget {
               ],
             ),
             const Spacer(),
+            if (jarvis.developerMode) ...[
+              Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6), decoration: BoxDecoration(color: _C.purple.withOpacity(0.12), borderRadius: BorderRadius.circular(8), border: Border.all(color: _C.purple.withOpacity(0.4))), child: const Text('DEVELOPER', style: TextStyle(color: _C.purple, fontFamily: 'Exo 2', fontSize: 8, fontWeight: FontWeight.w800, letterSpacing: 1))),
+              const SizedBox(width: 8),
+            ],
             _ModelPill(jarvis: jarvis),
             const SizedBox(width: 8),
             _StatusDot(connected: jarvis.isConnected),
