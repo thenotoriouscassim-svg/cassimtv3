@@ -36,7 +36,19 @@ class JarvisService extends ChangeNotifier {
   String? _accountToken;
   final Set<String> _cloudChatIds = {};
   Map<String, String> get _accountHeaders => _accountToken == null ? const {} : {'Authorization': 'Bearer $_accountToken'};
-  Future<void> setAccountToken(String token) async { _accountToken = token; notifyListeners(); }
+  Future<void> setAccountToken(String token) async {
+    _accountToken = token;
+    _cloudChatIds.clear();
+    await _loadCloudChats();
+    if (_activeChatId.isEmpty && _chatSessions.isNotEmpty) {
+      _activeChatId = _chatSessions.first['id'].toString();
+      _conversation
+        ..clear()
+        ..addAll((_chatSessions.first['messages'] as List<dynamic>? ?? []).whereType<Map>().map((m) => Message.fromJson(Map<String, dynamic>.from(m))));
+    }
+    await _persistChats();
+    notifyListeners();
+  }
   List<Map<String, dynamic>> get savedChats => _chatSessions.map((c) => Map<String, dynamic>.from(c)).toList();
   String get activeChatId => _activeChatId;
 
