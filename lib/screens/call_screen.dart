@@ -154,11 +154,11 @@ class _CallScreenState extends State<CallScreen> {
           // Give the native Android recognizer time to release the previous client.
           await Future.delayed(const Duration(milliseconds: 1200));
         }
-        if (_active && !_busy && !_handlingTurn && !_holdListening && mounted && !_startingListen) {
-          await _listen();
-        }
       } finally {
         _restartInProgress = false;
+      }
+      if (_active && !_busy && !_handlingTurn && !_holdListening && mounted && !_startingListen) {
+        await _listen();
       }
     });
   }
