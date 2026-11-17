@@ -175,7 +175,7 @@ async function code(req, env) {
   messages.push({ role: "user", content: req.message });
   if (mode === "advanced") {
     if (!configured(env, "NVIDIA_API_KEY")) return error("Advanced coding is not configured because the advanced coding service is unavailable.", 503);
-    const model = env.NVIDIA_DEEPSEEK_CODE_MODEL || "deepseek-ai/deepseek-v4.1-flash";
+    const model = env.NVIDIA_ADVANCED_CODE_MODEL || "poolside/laguna-xs-2.1";
     try {
       const upstream = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
         method: "POST",
