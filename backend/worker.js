@@ -167,17 +167,17 @@ async function tts(req, env) {
 function xmlText(item, tag) {
   const match = item.match(new RegExp("<" + tag + "(?:\\s[^>]*)?>([\\s\\S]*?)<\\/" + tag + ">", "i"));
   if (!match) return "";
-  return match[1].replace(/^<!\\[CDATA\\[|\\]\\]>$/g, "").replace(/<[^>]*>/g, " ")
+  return match[1].replace(/^<!\[CDATA\[|\]\]>$/g, "").replace(/<[^>]*>/g, " ")
     .replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;|&#x27;/g, "'")
-    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#(\\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-    .replace(/\\s+/g, " ").trim();
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/\s+/g, " ").trim();
 }
 async function search(req, env) {
   if (typeof req.query !== "string" || req.query.trim().length < 2 || req.query.length > 1000)
     return error("Search query must contain between 2 and 1000 characters.", 422);
   const query = req.query.trim();
   try {
-    const freshness = /\\b(latest|today|yesterday|this week|breaking|current|war|conflict|iran|israel|ukraine|usa|united states|election|president|attack|ceasefire|strike|sanction)\\b/i.test(query) ? " when:7d" : "";
+    const freshness = /\b(latest|today|yesterday|this week|breaking|current|war|conflict|iran|israel|ukraine|usa|united states|election|president|attack|ceasefire|strike|sanction)\b/i.test(query) ? " when:7d" : "";
     const params = new URLSearchParams({ q: query + freshness, hl: "en-ZA", gl: "ZA", ceid: "ZA:en" });
     const feedResponse = await fetch("https://news.google.com/rss/search?" + params.toString(), {
       headers: { "Accept": "application/rss+xml, application/xml, text/xml", "User-Agent": "Mozilla/5.0 JARVIS-AI/1.0" },
@@ -186,14 +186,14 @@ async function search(req, env) {
     if (!feedResponse.ok) throw new Error("News search returned HTTP " + feedResponse.status);
     const xml = await feedResponse.text();
     const articles = [];
-    for (const match of xml.matchAll(/<item>([\\s\\S]*?)<\\/item>/gi)) {
+    for (const match of xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)) {
       const item = match[1];
       const title = xmlText(item, "title");
       let url = xmlText(item, "link");
       const publisher = xmlText(item, "source") || "News publisher";
       const published = xmlText(item, "pubDate");
       const description = xmlText(item, "description").slice(0, 500);
-      if (!title || !url || !/^https?:\\/\\//i.test(url)) continue;
+      if (!title || !url || !/^https?:\/\//i.test(url)) continue;
       if (articles.some(a => a.title.toLowerCase() === title.toLowerCase())) continue;
       articles.push({ title, publisher, published, description, url });
       if (articles.length >= 10) break;
