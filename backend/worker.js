@@ -263,7 +263,7 @@ async function search(req, env) {
     const encodedQuery = query + freshness;
     const feeds = [
       {
-        provider: "Live News (Google News / Bing News)",
+        provider: "Google News",
         url: "https://news.google.com/rss/search?" + new URLSearchParams({ q: encodedQuery, hl: "en-ZA", gl: "ZA", ceid: "ZA:en" })
       },
       {
