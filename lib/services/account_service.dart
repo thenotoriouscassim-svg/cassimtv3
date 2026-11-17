@@ -28,12 +28,13 @@ class AccountService extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     _token = prefs.getString('jarvis_account_token');
     _username = prefs.getString('jarvis_account_username');
+    _hasRecovery = prefs.getBool('jarvis_has_recovery') ?? false;
     if (_token != null) {
       try {
         final r = await http.get(Uri.parse('${JarvisStrings.backendUrl}/auth/me'),
           headers: {'Authorization': 'Bearer $_token'}).timeout(const Duration(seconds: 15));
         if (r.statusCode != 200) { _token = null; _username = null; await prefs.remove('jarvis_account_token'); await prefs.remove('jarvis_account_username'); }
-        else { final data = jsonDecode(r.body) as Map<String,dynamic>; _username = data['user']?['username']?.toString() ?? _username; }
+        else { final data = jsonDecode(r.body) as Map<String,dynamic>; _username = data['user']?['username']?.toString() ?? _username; _hasRecovery = data['user']?['has_recovery'] == true; await prefs.setBool('jarvis_has_recovery', _hasRecovery); }
       } catch (_) {
         // Keep a previously issued token during a temporary network outage.
       }
@@ -64,6 +65,7 @@ class AccountService extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('jarvis_account_token', _token!);
       await prefs.setString('jarvis_account_username', _username!);
+      await prefs.setBool('jarvis_has_recovery', _hasRecovery);
       return true;
     } catch (e) {
       _error = 'Could not reach the account server. Check your connection and try again.';
@@ -115,10 +117,11 @@ class AccountService extends ChangeNotifier {
 
   Future<void> logout() async {
     final old = _token;
-    _token = null; _username = null;
+    _token = null; _username = null; _hasRecovery = false;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('jarvis_account_token');
     await prefs.remove('jarvis_account_username');
+    await prefs.remove('jarvis_has_recovery');
     if (old != null) {
       try { await http.post(Uri.parse('${JarvisStrings.backendUrl}/auth/logout'),
         headers: {'Authorization':'Bearer $old'}).timeout(const Duration(seconds:10)); } catch (_) {}
