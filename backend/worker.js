@@ -594,7 +594,7 @@ async function handle(request, env) {
       coding_advanced: { status: configured(env, "NVIDIA_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no coding request was run." },
       voice_output: { status: configured(env, "FISH_API_KEY") && configured(env, "FISH_AUDIO_VOICE_ID") ? "configured" : "not_configured", detail: "Credentials configured; no audio generation was run." },
       speech_transcription: { status: configured(env, "GROQ_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no transcription was run." },
-      web_search: { status: "available", detail: "RSS search is enabled; a live search was not run." }
+      web_search: { status: "available", detail: "General web search, webpage retrieval and news RSS are enabled; a live search was not run." }
     };
     return json({ status: "online", checked_at: new Date().toISOString(), modules });
   }
@@ -628,7 +628,7 @@ async function handle(request, env) {
       coding_advanced: { status: configured(env, "NVIDIA_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no coding request was run." },
       voice_output: { status: configured(env, "FISH_API_KEY") && configured(env, "FISH_AUDIO_VOICE_ID") ? "configured" : "not_configured", detail: "Fish Audio credentials are present; no audio was generated." },
       speech_transcription: { status: configured(env, "GROQ_API_KEY") ? "configured" : "not_configured", detail: "Groq credentials are present; no audio was transcribed." },
-      web_search: { status: "available", detail: "RSS search is enabled; a live search was not run during this check." }
+      web_search: { status: "available", detail: "General web search, webpage retrieval and news RSS are enabled; a live search was not run during this check." }
     };
     return json({ status: "online", checked_at: new Date().toISOString(), modules });
   }
