@@ -8,6 +8,12 @@ from workers import asgi, env
 # using its existing configuration without changing Render behaviour.
 for _name in (
     "GEMINI_API_KEY",
+    "GROQ_API_KEY",
+    "GROQ_MODEL",
+    "NVIDIA_API_KEY",
+    "NVIDIA_MODEL",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_MODEL",
     "ZAI_API_KEY",
     "FISH_API_KEY",
     "FISH_AUDIO_VOICE_ID",
