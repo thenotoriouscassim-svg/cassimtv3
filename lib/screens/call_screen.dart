@@ -170,7 +170,13 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       if (mounted) setState(() => _status = 'Transcription failed: $error. Tap mic to try again.');
     } finally {
       _busy = false; _handlingTurn = false;
-      if (_active && mounted && !_recording) setState(() => _status = 'Ready — tap the mic and speak');
+      // Keep transcription/API errors visible instead of immediately hiding them
+      // behind the generic Ready status.
+      final hasError = _status.startsWith('Transcription failed:') ||
+          _status.startsWith('JARVIS response failed:');
+      if (_active && mounted && !_recording && !hasError) {
+        setState(() => _status = 'Ready — tap the mic and speak');
+      }
     }
   }
 
