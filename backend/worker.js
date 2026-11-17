@@ -93,9 +93,43 @@ async function provider(req, env, choice) {
   if (choice === "v3") return gemini(req, env);
   return compatible(req, env, choice);
 }
+async function callVoice(req, env) {
+  // Call Mode uses a small, low-latency model independently of the normal chat selector.
+  if (configured(env, "GROQ_API_KEY")) {
+    try {
+      const data = await fetchJson("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${env.GROQ_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: env.GROQ_VOICE_MODEL || "llama-3.1-8b-instant",
+          messages: messagesFor(req),
+          temperature: 0.5,
+          max_tokens: 256,
+          stream: false
+        })
+      }, 20000);
+      let answer = data.choices?.[0]?.message?.content || "";
+      if (Array.isArray(answer)) answer = answer.map(x => x.text || "").join("");
+      answer = String(answer).trim();
+      if (answer) return answer;
+      throw new Error("Fast voice model returned an empty answer.");
+    } catch (e) {
+      console.error("Fast Call Mode model failed; trying Gemini fallback:", e.message);
+    }
+  }
+  return gemini(req, env);
+}
+
 async function chat(req, env) {
   if (typeof req.message !== "string" || !req.message.trim() || req.message.length > 12000)
     return error("Message must contain between 1 and 12000 characters.", 422);
+  if (req.voice_mode) {
+    try { return json({ response: await callVoice(req, env), model_choice: "voice-fast" }); }
+    catch (e) {
+      const msg = String(e.message || e);
+      return error(msg, /not configured/i.test(msg) ? 503 : /timeout|abort/i.test(msg) ? 504 : 502);
+    }
+  }
   const choice = req.model_choice || "v3";
   if (!["auto", "v1", "v2", "v3", "v4"].includes(choice)) return error("Invalid model selection.", 422);
   if (choice !== "auto") {
