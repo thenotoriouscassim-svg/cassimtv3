@@ -13,7 +13,6 @@ class _C {
   static const border = Color(0xFF1E2D3D);
   static const cyan = Color(0xFF00C8FF);
   static const purple = Color(0xFF7B2FFF);
-  static const amber = Color(0xFFFFB347);
   static const red = Color(0xFFFF3B5C);
   static const green = Color(0xFF00E5A0);
   static const textHi = Color(0xFFE8F4FF);
