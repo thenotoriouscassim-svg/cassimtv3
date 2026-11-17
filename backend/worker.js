@@ -29,7 +29,7 @@ async function bodyJson(request) {
   try { return await request.json(); } catch { throw new Error("Request body must be valid JSON."); }
 }
 function messagesFor(req) {
-  const messages = [{ role: "system", content: SYSTEM_PROMPT +
+  const messages = [{ role: "system", content: SYSTEM_PROMPT + (req._account_memory || "") +
     (req.voice_mode ? "\nVOICE CALL MODE: Reply immediately and naturally in 1-3 short spoken sentences. Lead with the direct answer; avoid long lists and markdown." : "") }];
   const history = Array.isArray(req.conversation_history) ? req.conversation_history.slice(-12) : [];
   for (const turn of history) {
@@ -326,10 +326,201 @@ async function search(req, env) {
     return error("Live news search is temporarily unavailable: " + String(e.message || e).slice(0, 220), 502);
   }
 }
+
+
+// Account security and cloud-synced personal data.
+const encoder = new TextEncoder();
+function b64url(bytes) {
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+function randomId(bytes = 18) {
+  const data = new Uint8Array(bytes);
+  crypto.getRandomValues(data);
+  return b64url(data);
+}
+async function digestHex(value) {
+  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(value));
+  return Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, "0")).join("");
+}
+async function passwordHash(password, salt) {
+  const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt: encoder.encode(salt), iterations: 310000, hash: "SHA-256" }, key, 256);
+  return b64url(new Uint8Array(bits));
+}
+function validUsername(value) {
+  return typeof value === "string" && /^[a-zA-Z0-9_.-]{3,24}$/.test(value);
+}
+function validPassword(value) {
+  return typeof value === "string" && value.length >= 8 && value.length <= 128;
+}
+async function issueSession(userId, env) {
+  const token = randomId(32);
+  const now = new Date();
+  const expires = new Date(now.getTime() + 30 * 86400000).toISOString();
+  await env.DB.prepare("INSERT INTO sessions (id,user_id,token_hash,expires_at,created_at) VALUES (?,?,?,?,?)")
+    .bind(randomId(), userId, await digestHex(token), expires, now.toISOString()).run();
+  return { token, expires_at: expires };
+}
+async function authenticatedUser(request, env) {
+  const auth = request.headers.get("Authorization") || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  if (!token || token.length < 30 || token.length > 200) return null;
+  const row = await env.DB.prepare(
+    "SELECT u.id,u.username FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?"
+  ).bind(await digestHex(token), new Date().toISOString()).first();
+  return row || null;
+}
+async function requireUser(request, env) {
+  if (!env.DB) throw new Error("Account storage is not configured.");
+  const user = await authenticatedUser(request, env);
+  return user ? user : null;
+}
+async function authRoutes(request, env, path) {
+  if (!env.DB) return error("Account storage is temporarily unavailable.", 503);
+  if (request.method === "POST" && (path === "/auth/signup" || path === "/auth/login")) {
+    const req = await bodyJson(request);
+    const username = typeof req.username === "string" ? req.username.trim() : "";
+    const password = req.password;
+    if (path.endsWith("signup") && !validUsername(username))
+      return error("Username must be 3–24 characters and use letters, numbers, dots, dashes or underscores.", 422);
+    if (path.endsWith("signup") && !validPassword(password))
+      return error("Password must be at least 8 characters and no more than 128 characters.", 422);
+    if (path.endsWith("login") && (!username || typeof password !== "string" || !password))
+      return error("Enter your username and password.", 422);
+    if (path.endsWith("signup")) {
+      const existing = await env.DB.prepare("SELECT id FROM users WHERE username=? COLLATE NOCASE").bind(username).first();
+      if (existing) return error("That username is already taken. Please choose another.", 409);
+      const salt = randomId(16);
+      const hash = await passwordHash(password, salt);
+      const userId = randomId();
+      try {
+        await env.DB.prepare("INSERT INTO users (id,username,password_hash,password_salt,created_at) VALUES (?,?,?,?,?)")
+          .bind(userId, username, hash, salt, new Date().toISOString()).run();
+      } catch (e) {
+        if (String(e.message).toLowerCase().includes("unique")) return error("That username is already taken. Please choose another.", 409);
+        throw e;
+      }
+      const session = await issueSession(userId, env);
+      return json({ token: session.token, expires_at: session.expires_at, user: { id: userId, username } }, 201);
+    }
+    const user = await env.DB.prepare("SELECT id,username,password_hash,password_salt FROM users WHERE username=? COLLATE NOCASE")
+      .bind(username).first();
+    if (!user) return error("Incorrect username or password.", 401);
+    const candidate = await passwordHash(password, user.password_salt);
+    if (candidate !== user.password_hash) return error("Incorrect username or password.", 401);
+    const session = await issueSession(user.id, env);
+    return json({ token: session.token, expires_at: session.expires_at, user: { id: user.id, username: user.username } });
+  }
+  if (request.method === "GET" && path === "/auth/me") {
+    const user = await requireUser(request, env);
+    return user ? json({ user }) : error("Your session has expired. Please log in again.", 401);
+  }
+  if (request.method === "POST" && path === "/auth/logout") {
+    const auth = request.headers.get("Authorization") || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    if (token) await env.DB.prepare("DELETE FROM sessions WHERE token_hash=?").bind(await digestHex(token)).run();
+    return json({ success: true });
+  }
+  return null;
+}
+async function accountRoutes(request, env, path) {
+  if (!env.DB) return error("Account storage is not configured.", 503);
+  const user = await requireUser(request, env);
+  if (!user) return error("Please log in to access your synced data.", 401);
+  if (path === "/chats" && request.method === "GET") {
+    const rows = await env.DB.prepare("SELECT id,title,created_at,updated_at FROM chats WHERE user_id=? ORDER BY updated_at DESC LIMIT 200")
+      .bind(user.id).all();
+    return json({ chats: rows.results || [] });
+  }
+  if (path === "/chats" && request.method === "POST") {
+    const req = await bodyJson(request);
+    const id = typeof req.id === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(req.id) ? req.id : randomId();
+    const title = typeof req.title === "string" ? req.title.trim().slice(0,100) || "New chat" : "New chat";
+    const now = new Date().toISOString();
+    await env.DB.prepare("INSERT INTO chats (id,user_id,title,created_at,updated_at) VALUES (?,?,?,?,?)")
+      .bind(id,user.id,title,now,now).run();
+    return json({ id,title,created_at:now,updated_at:now },201);
+  }
+  const chatMatch = path.match(/^\/chats\/([a-zA-Z0-9_-]{1,80})$/);
+  if (chatMatch && request.method === "GET") {
+    const chat = await env.DB.prepare("SELECT id,title,created_at,updated_at FROM chats WHERE id=? AND user_id=?")
+      .bind(chatMatch[1],user.id).first();
+    if (!chat) return error("Chat not found.",404);
+    const rows = await env.DB.prepare("SELECT id,role,content,created_at FROM messages WHERE chat_id=? AND user_id=? ORDER BY created_at ASC LIMIT 500")
+      .bind(chat.id,user.id).all();
+    return json({ chat, messages: rows.results || [] });
+  }
+  if (chatMatch && request.method === "PUT") {
+    const req = await bodyJson(request);
+    const chatId = chatMatch[1];
+    const chat = await env.DB.prepare("SELECT id FROM chats WHERE id=? AND user_id=?").bind(chatId,user.id).first();
+    if (!chat) return error("Chat not found.",404);
+    if (!Array.isArray(req.messages) || req.messages.length > 200) return error("A chat can contain up to 200 messages per sync.",422);
+    const title = typeof req.title === "string" ? req.title.trim().slice(0,100) || "New chat" : "New chat";
+    const now = new Date().toISOString();
+    const statements = [
+      env.DB.prepare("UPDATE chats SET title=?,updated_at=? WHERE id=? AND user_id=?").bind(title,now,chatId,user.id),
+      env.DB.prepare("DELETE FROM messages WHERE chat_id=? AND user_id=?").bind(chatId,user.id)
+    ];
+    for (const m of req.messages) {
+      if (!m || !["user","assistant","system"].includes(m.role) || typeof m.content !== "string" || m.content.length > 20000) continue;
+      statements.push(env.DB.prepare("INSERT INTO messages (id,chat_id,user_id,role,content,created_at) VALUES (?,?,?,?,?,?)")
+        .bind(randomId(),chatId,user.id,m.role,m.content,new Date(m.timestamp || now).toISOString()));
+    }
+    await env.DB.batch(statements);
+    return json({ success:true, updated_at:now });
+  }
+  if (chatMatch && request.method === "DELETE") {
+    await env.DB.prepare("DELETE FROM chats WHERE id=? AND user_id=?").bind(chatMatch[1],user.id).run();
+    return json({ success:true });
+  }
+  if (path === "/memories" && request.method === "GET") {
+    const rows = await env.DB.prepare("SELECT id,memory_key AS key,memory_value AS value,created_at AS timestamp FROM memories WHERE user_id=? ORDER BY updated_at DESC LIMIT 300")
+      .bind(user.id).all();
+    return json({ memories: rows.results || [] });
+  }
+  if (path === "/memories" && request.method === "POST") {
+    const req = await bodyJson(request);
+    const key = typeof req.key === "string" ? req.key.trim().slice(0,120) : "";
+    const value = typeof req.value === "string" ? req.value.trim().slice(0,2000) : "";
+    if (!key || !value) return error("A memory title and value are required.",422);
+    const id = randomId(), now = new Date().toISOString();
+    await env.DB.prepare("INSERT INTO memories (id,user_id,memory_key,memory_value,created_at,updated_at) VALUES (?,?,?,?,?,?)")
+      .bind(id,user.id,key,value,now,now).run();
+    return json({ id,key,value,timestamp:now },201);
+  }
+  const memoryMatch = path.match(/^\/memories\/([a-zA-Z0-9_-]{1,80})$/);
+  if (memoryMatch && request.method === "DELETE") {
+    await env.DB.prepare("DELETE FROM memories WHERE id=? AND user_id=?").bind(memoryMatch[1],user.id).run();
+    return json({ success:true });
+  }
+  return null;
+}
+async function loadAccountMemory(request, env) {
+  if (!env.DB) return "";
+  const user = await authenticatedUser(request, env);
+  if (!user) return "";
+  const rows = await env.DB.prepare("SELECT memory_key,memory_value FROM memories WHERE user_id=? ORDER BY updated_at DESC LIMIT 30")
+    .bind(user.id).all();
+  if (!rows.results?.length) return "";
+  return "\n\nLONG-TERM USER MEMORY (account-owned; use when relevant, do not invent details):\n" +
+    rows.results.map(m => "- " + m.memory_key + ": " + m.memory_value).join("\n");
+}
+
 async function handle(request, env) {
   const url = new URL(request.url);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (request.method === "GET" && url.pathname === "/") return json({ name: "JARVIS AI by CassimTV", status: "online" });
+  if (url.pathname.startsWith("/auth/")) {
+    try { const response = await authRoutes(request, env, url.pathname); if (response) return response; }
+    catch (e) { console.error("JARVIS auth error:", e?.stack || e); return error("Account service encountered an error. Please retry.",500); }
+  }
+  if (url.pathname === "/chats" || url.pathname.startsWith("/chats/") || url.pathname === "/memories" || url.pathname.startsWith("/memories/")) {
+    try { const response = await accountRoutes(request, env, url.pathname); if (response) return response; }
+    catch (e) { console.error("JARVIS account data error:", e?.stack || e); return error("Could not sync your account data. Please retry.",500); }
+  }
   if (request.method === "GET" && url.pathname === "/health") return json({ status: "online", name: "JARVIS AI", brand: "CassimTV", ai_configured: configured(env, "GEMINI_API_KEY"), voice_configured: configured(env, "FISH_API_KEY") && configured(env, "FISH_AUDIO_VOICE_ID") });
   if (request.method === "GET" && url.pathname === "/models") return json({ models: [
     { id: "v1", name: "JARVIS v1", configured: configured(env, "GROQ_API_KEY") },
@@ -344,7 +535,7 @@ async function handle(request, env) {
   let req;
   try { req = await bodyJson(request); } catch (e) { return error(e.message, 400); }
   if (url.pathname === "/transcribe") return error("Transcription requires multipart audio.", 400);
-  if (url.pathname === "/chat") return chat(req, env);
+  if (url.pathname === "/chat") { req._account_memory = await loadAccountMemory(request, env); return chat(req, env); }
   if (url.pathname === "/code") return code(req, env);
   if (url.pathname === "/tts") return tts(req, env);
   if (url.pathname === "/search") return search(req, env);
