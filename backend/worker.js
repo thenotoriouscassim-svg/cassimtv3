@@ -111,17 +111,20 @@ async function chat(req, env) {
   });
   if (!available.length) return error("No JARVIS assistant models are configured yet.", 503);
   // Race all configured providers; ignore failures and return the first successful answer.
-  const pending = available.map(model => provider(req, env, model).then(
-    response => ({ model, response }), error => ({ model, error })
-  ));
+  const pending = available.map(model => {
+    const token = {};
+    token.promise = provider(req, env, model).then(
+      response => ({ model, response, token }),
+      failure => ({ model, error: failure, token })
+    );
+    return token;
+  });
   const failures = [];
   while (pending.length) {
-    const result = await Promise.race(pending);
-    const idx = pending.findIndex(p => p === result.promise);
-    // Promises are settled via tagged wrappers below; remove by settled marker.
+    const result = await Promise.race(pending.map(item => item.promise));
     if (result.response) return json({ response: result.response, model_choice: result.model, selection: "auto" });
     failures.push(`${result.model}: ${result.error?.message || "failed"}`);
-    pending.splice(pending.findIndex(p => p === result._promise), 1);
+    pending.splice(pending.indexOf(result.token), 1);
   }
   return error("All configured JARVIS models are temporarily unavailable. " + failures.join("; ").slice(0, 700), 502);
 }
