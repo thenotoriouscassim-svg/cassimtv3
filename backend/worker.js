@@ -74,7 +74,7 @@ async function gemini(req, env) {
 async function compatible(req, env, choice) {
   const cfg = {
     v1: ["GROQ_API_KEY", "https://api.groq.com/openai/v1/chat/completions", env.GROQ_MODEL || "openai/gpt-oss-20b", "JARVIS v1"],
-    v2: ["NVIDIA_API_KEY", "https://integrate.api.nvidia.com/v1/chat/completions", env.NVIDIA_MODEL || "nvidia/nemotron-3-super-120b-a12b", "JARVIS v2"],
+    v2: ["NVIDIA_API_KEY", "https://integrate.api.nvidia.com/v1/chat/completions", env.NVIDIA_MODEL || "nvidia/nemotron-3.5-super-vl-120b-a12b", "JARVIS v2"],
     v4: ["OPENROUTER_API_KEY", "https://openrouter.ai/api/v1/chat/completions", env.OPENROUTER_MODEL || "openrouter/free", "JARVIS v4"],
   }[choice];
   const [key, endpoint, model, label] = cfg;
@@ -129,13 +129,37 @@ async function chat(req, env) {
   return error("All configured JARVIS models are temporarily unavailable. " + failures.join("; ").slice(0, 700), 502);
 }
 async function code(req, env) {
-  if (!configured(env, "ZAI_API_KEY")) return error("The coding service is not configured yet.", 503);
   if (typeof req.message !== "string" || !req.message.trim()) return error("A coding request is required.", 422);
-  const messages = [{ role: "system", content: "You are JARVIS's dedicated software engineer. Produce correct, complete, runnable code. Respect the existing architecture. Explain briefly when useful." }];
+  const mode = req.mode === "advanced" ? "advanced" : "standard";
+  const messages = [{
+    role: "system",
+    content: mode === "advanced"
+      ? "You are JARVIS's advanced software architect and principal engineer. Use deep reasoning for complex architecture, difficult debugging, multi-file changes, performance, security, concurrency, and production systems. Think through edge cases and failure modes before answering. Produce complete, correct, runnable code; preserve the user's existing architecture and explain important decisions. Never claim to have run tests or changed files unless the tools actually did so."
+      : "You are JARVIS's standard coding assistant. Handle everyday scripts, small features, straightforward fixes, and code explanations. Produce correct, complete, runnable code and respect the existing architecture. Keep explanations concise."
+  }];
   for (const m of (Array.isArray(req.conversation_history) ? req.conversation_history.slice(-10) : [])) {
     if (["user", "assistant"].includes(m?.role) && typeof m.content === "string") messages.push({ role: m.role, content: m.content.slice(0, 16000) });
   }
   messages.push({ role: "user", content: req.message });
+  if (mode === "advanced") {
+    if (!configured(env, "NVIDIA_API_KEY")) return error("Advanced coding is not configured because the advanced coding service is unavailable.", 503);
+    const model = env.NVIDIA_DEEPSEEK_CODE_MODEL || "deepseek-ai/deepseek-v4.1-flash";
+    try {
+      const upstream = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${env.NVIDIA_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model, messages, temperature: 0.15, max_tokens: 12000, stream: true })
+      });
+      if (!upstream.ok) {
+        const detail = (await upstream.text()).slice(0, 600);
+        return error(`Advanced coding service returned HTTP ${upstream.status}: ${detail}`, 502);
+      }
+      return new Response(upstream.body, { status: 200, headers: { ...cors, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
+    } catch (e) {
+      return error("Advanced coding service failed: " + String(e.message || e), 502);
+    }
+  }
+  if (!configured(env, "ZAI_API_KEY")) return error("The standard coding service is not configured yet.", 503);
   let last;
   for (const model of [env.ZAI_CODE_MODEL || "glm-4.6", "glm-4.5-flash"]) {
     try {
@@ -149,7 +173,7 @@ async function code(req, env) {
       if (!detail.includes("1305") && upstream.status !== 429) break;
     } catch (e) { last = e.message; }
   }
-  return error(`The coding service failed: ${last || "temporarily unavailable"}`, 502);
+  return error(`The standard coding service failed: ${last || "temporarily unavailable"}`, 502);
 }
 async function tts(req, env) {
   if (!configured(env, "FISH_API_KEY") || !configured(env, "FISH_AUDIO_VOICE_ID"))
@@ -236,7 +260,7 @@ async function handle(request, env) {
     { id: "v3", name: "JARVIS v3", configured: configured(env, "GEMINI_API_KEY") },
     { id: "v4", name: "JARVIS v4", configured: configured(env, "OPENROUTER_API_KEY") },
     { id: "auto", name: "AUTO", configured: ["GROQ_API_KEY","NVIDIA_API_KEY","GEMINI_API_KEY","OPENROUTER_API_KEY"].some(k => configured(env,k)) },
-  ], coding: { configured: configured(env, "ZAI_API_KEY"), model: env.ZAI_CODE_MODEL || "glm-4.6" } });
+  ], coding: { standard_configured: configured(env, "ZAI_API_KEY"), standard_model: env.ZAI_CODE_MODEL || "glm-4.6", advanced_configured: configured(env, "NVIDIA_API_KEY"), advanced_model: env.NVIDIA_DEEPSEEK_CODE_MODEL || "deepseek-ai/deepseek-v4.1-flash" } });
   if (request.method === "GET" && url.pathname === "/stats") return json({ cpu_percent: null, ram_used_gb: null, ram_total_gb: null, ram_percent: null, storage_used_gb: null, storage_total_gb: null, storage_percent: null, cpu_temp: null, battery_percent: null, network_status: "connected", platform: "Cloudflare Workers", uptime_seconds: null });
   if (request.method !== "POST") return error("Not found.", 404);
   let req;
