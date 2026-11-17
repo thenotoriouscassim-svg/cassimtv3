@@ -578,7 +578,7 @@ async function handle(request, env) {
   if (request.method === "GET" && url.pathname === "/") return json({ name: "JARVIS AI by CassimTV", status: "online" });
   if (url.pathname.startsWith("/auth/")) {
     try { const response = await authRoutes(request, env, url.pathname); if (response) return response; }
-    catch (e) { console.error("JARVIS auth error:", e?.stack || e); return error("Account service encountered an error. Please retry.",500); }
+    catch (e) { console.error("JARVIS auth error:", e?.stack || e); const diagnostic = String(e?.message || e || "Unknown error").replace(/[\r\n]/g, " ").slice(0, 180); return error("Account service diagnostic: " + (e?.name || "Error") + ": " + diagnostic,500); }
   }
   if (url.pathname === "/chats" || url.pathname.startsWith("/chats/") || url.pathname === "/memories" || url.pathname.startsWith("/memories/")) {
     try { const response = await accountRoutes(request, env, url.pathname); if (response) return response; }
