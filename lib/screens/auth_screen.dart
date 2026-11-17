@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/account_service.dart';
+import '../services/jarvis_service.dart';
 import '../utils/constants.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -74,6 +75,7 @@ class _AuthScreenState extends State<AuthScreen> {
     final u=_username.text.trim(), p=_password.text;
     final ok=_signup?await account.signUp(u,p):await account.login(u,p);
     if (ok && mounted) {
+      await context.read<JarvisService>().setAccountToken(account.token!);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Welcome, ${account.username}.')));
     }
   }
