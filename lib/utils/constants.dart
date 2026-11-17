@@ -27,7 +27,7 @@ class JarvisStrings {
   static const String standby      = 'STANDBY';
   static const String processing   = 'PROCESSING';
   static const String speaking     = 'SPEAKING';
-  static const String backendUrl   = 'https://cassimtv3.onrender.com';
+  static const String backendUrl   = 'https://jarvis-ai-cassimtv.ramancassim-764.workers.dev';
 }
 
 class JarvisDurations {
