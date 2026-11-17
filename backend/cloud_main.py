@@ -6,12 +6,19 @@ hardware dependencies are loaded by this service.
 import os
 import time
 import json
+import asyncio
+import re
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, urlparse
 from typing import Dict, List, Optional
 
 import httpx
-import psutil
+
+try:
+    import psutil
+except ImportError:
+    # Cloudflare Workers has no host OS process metrics; Render keeps psutil.
+    psutil = None
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -123,7 +130,6 @@ class _DuckDuckGoResultsParser(HTMLParser):
 
 async def _search_without_gemini(query: str):
     """Search several independent public indexes; avoid relying on DuckDuckGo alone."""
-    import asyncio
     import xml.etree.ElementTree as ET
 
     headers = {
@@ -597,6 +603,23 @@ async def text_to_speech(req: VoiceRequest):
 
 @app.get("/stats")
 async def stats():
+    if psutil is None:
+        # Workers do not expose host CPU, RAM, disk, or thermal counters.
+        # Return unknown values instead of inventing measurements.
+        return {
+            "cpu_percent": None,
+            "ram_used_gb": None,
+            "ram_total_gb": None,
+            "ram_percent": None,
+            "storage_used_gb": None,
+            "storage_total_gb": None,
+            "storage_percent": None,
+            "cpu_temp": None,
+            "battery_percent": None,
+            "network_status": "connected",
+            "platform": "Cloudflare Workers",
+            "uptime_seconds": int(time.time() - APP_STARTED),
+        }
     mem = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
     return {
