@@ -651,6 +651,14 @@ class JarvisService extends ChangeNotifier {
       return;
     }
 
+    final isCurrentNewsTopic =
+        RegExp(r'\\b(iran|usa|united states|israel|palestine|ukraine|russia|lebanon|yemen|syria|gaza|nato|china|taiwan)\\b', caseSensitive: false).hasMatch(trimmed) &&
+        RegExp(r'\\b(war|conflict|attack|strike|missile|ceasefire|invasion|bombing|latest|news|today|update|tensions)\\b', caseSensitive: false).hasMatch(trimmed);
+    if (isCurrentNewsTopic) {
+      await searchWeb(trimmed, speakResponse: speakResponse);
+      return;
+    }
+
     final codingRequest = _isCodingRequest(trimmed);
     // Send only earlier turns; the backend appends the current message itself.
     final history = _conversation
