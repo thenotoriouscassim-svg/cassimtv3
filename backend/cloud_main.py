@@ -558,7 +558,7 @@ async def _call_model_provider(req: ChatRequest, choice: str):
         return await _call_openai_compatible(
             req, api_key=os.getenv("NVIDIA_API_KEY", "").strip(),
             endpoint="https://integrate.api.nvidia.com/v1/chat/completions",
-            model=os.getenv("NVIDIA_MODEL", "nvidia/llama-3.1-nemotron-70b-instruct").strip(),
+            model=os.getenv("NVIDIA_MODEL", "z-ai/glm-5.3-flash").strip(),
             provider="JARVIS v2",
         )
     if choice == "v3":
