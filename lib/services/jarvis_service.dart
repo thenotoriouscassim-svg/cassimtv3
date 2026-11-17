@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:shizuku_api/shizuku_api.dart';
@@ -249,6 +250,20 @@ class JarvisService extends ChangeNotifier {
       if (speakResponse) await _speakResponse(message);
       _setState(JarvisState.standby);
     }
+  }
+
+  Future<String> transcribeAudio(File audioFile) async {
+    final request = http.MultipartRequest('POST', Uri.parse(_backendUrl + '/transcribe'));
+    request.files.add(await http.MultipartFile.fromPath('file', audioFile.path, filename: 'jarvis-recording.m4a'));
+    final streamed = await request.send().timeout(const Duration(minutes: 4));
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode != 200) {
+      var detail = 'Transcription failed (HTTP ${response.statusCode}).';
+      try { detail = (jsonDecode(response.body) as Map<String, dynamic>)['detail']?.toString() ?? detail; } catch (_) {}
+      throw Exception(detail);
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    return data['text']?.toString() ?? '';
   }
 
   Future<void> _connectToBackend() async {
