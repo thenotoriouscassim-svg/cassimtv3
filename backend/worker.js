@@ -585,6 +585,31 @@ async function handle(request, env) {
     catch (e) { console.error("JARVIS account data error:", e?.stack || e); return error("Could not sync your account data. Please retry.",500); }
   }
   if (request.method === "GET" && url.pathname === "/health") return json({ status: "online", name: "JARVIS AI", brand: "CassimTV", ai_configured: configured(env, "GEMINI_API_KEY"), voice_configured: configured(env, "FISH_API_KEY") && configured(env, "FISH_AUDIO_VOICE_ID") });
+  if (request.method === "GET" && url.pathname === "/diagnostics") {
+    let database = "offline";
+    try {
+      if (env.DB) {
+        const check = await env.DB.prepare("SELECT 1 AS ok").first();
+        database = check?.ok === 1 ? "online" : "error";
+      } else database = "not_configured";
+    } catch (e) { console.error("JARVIS diagnostics database check failed:", e?.message || e); }
+    const modules = {
+      cloudflare_worker: { status: "online", detail: "This Worker responded to the diagnostic request." },
+      database: { status: database, detail: database === "online" ? "D1 query succeeded." : "D1 query did not succeed." },
+      authentication: { status: database === "online" ? "available" : "degraded", detail: "Account endpoints depend on the D1 database." },
+      chat_memory_sync: { status: database === "online" ? "available" : "degraded", detail: "Cloud chat and memory storage depend on D1." },
+      ai_gemini: { status: configured(env, "GEMINI_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no model inference was run." },
+      ai_groq: { status: configured(env, "GROQ_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no model inference was run." },
+      ai_nvidia: { status: configured(env, "NVIDIA_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no model inference was run." },
+      ai_openrouter: { status: configured(env, "OPENROUTER_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no model inference was run." },
+      coding_standard: { status: configured(env, "ZAI_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no coding request was run." },
+      coding_advanced: { status: configured(env, "NVIDIA_API_KEY") ? "configured" : "not_configured", detail: "Configuration check only; no coding request was run." },
+      voice_output: { status: configured(env, "FISH_API_KEY") && configured(env, "FISH_AUDIO_VOICE_ID") ? "configured" : "not_configured", detail: "Fish Audio credentials are present; no audio was generated." },
+      speech_transcription: { status: configured(env, "GROQ_API_KEY") ? "configured" : "not_configured", detail: "Groq credentials are present; no audio was transcribed." },
+      web_search: { status: "available", detail: "RSS search is enabled; a live search was not run during this check." }
+    };
+    return json({ status: "online", checked_at: new Date().toISOString(), modules });
+  }
   if (request.method === "GET" && url.pathname === "/models") return json({ models: [
     { id: "v1", name: "JARVIS v1", configured: configured(env, "GROQ_API_KEY") },
     { id: "v2", name: "JARVIS v2", configured: configured(env, "NVIDIA_API_KEY") },
