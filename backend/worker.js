@@ -574,7 +574,7 @@ async function loadAccountMemory(request, env, currentMessage = "") {
 }
 async function handle(request, env) {
   const url = new URL(request.url);
-  const pathname = url.pathname.replace(/\\/+$/, "") || "/";
+  const pathname = url.pathname.endsWith("/") && url.pathname.length > 1 ? url.pathname.slice(0, -1) : url.pathname;
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (request.method === "GET" && pathname === "/") return json({ name: "JARVIS AI by CassimTV", status: "online" });
   if (request.method === "GET" && (pathname === "/diagnostics" || pathname === "/api/diagnostics")) {
