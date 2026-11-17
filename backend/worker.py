@@ -1,12 +1,14 @@
-"""Cloudflare Python Workers entrypoint for the existing JARVIS FastAPI app."""
+"""Cloudflare Python Workers entrypoint for the existing JARVIS FastAPI app.
+
+Use the official WorkerEntrypoint env binding and ASGI adapter so secrets are
+available before cloud_main reads its configuration.
+"""
 import os
 
-from workers import asgi, env
+from workers import WorkerEntrypoint
 
-# Cloudflare secrets are exposed through workers.env, not os.environ.
-# Bridge only the known JARVIS settings so the shared backend can keep
-# using its existing configuration without changing Render behaviour.
-for _name in (
+
+_ENV_NAMES = (
     "GEMINI_API_KEY",
     "GROQ_API_KEY",
     "GROQ_MODEL",
@@ -18,15 +20,24 @@ for _name in (
     "FISH_API_KEY",
     "FISH_AUDIO_VOICE_ID",
     "FISH_AUDIO_MODEL",
-):
-    try:
-        _value = getattr(env, _name, None)
-    except Exception:
-        _value = None
-    if _value is not None:
-        os.environ[_name] = str(_value)
+)
 
-from cloud_main import app
 
-# Cloudflare supplies the ASGI server; do not start Uvicorn in a Worker.
-Default = asgi.entrypoint(app)
+class Default(WorkerEntrypoint):
+    async def fetch(self, request):
+        # Cloudflare exposes variables and secrets through self.env.
+        # Populate the shared app's existing configuration before importing it.
+        for name in _ENV_NAMES:
+            try:
+                value = getattr(self.env, name, None)
+            except Exception:
+                value = None
+            if value is not None:
+                os.environ[name] = str(value)
+
+        # Import only after environment bindings are copied: cloud_main reads
+        # provider credentials at module import time.
+        from cloud_main import app
+        import asgi
+
+        return await asgi.fetch(app, request.js_object, self.env)
