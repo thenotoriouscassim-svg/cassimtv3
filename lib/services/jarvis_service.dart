@@ -608,12 +608,15 @@ class JarvisService extends ChangeNotifier {
   }
 
   Future<void> _chooseCodingMode(String choice, {bool speakResponse = false}) async {
-    final mode = choice.trim().toLowerCase();
-    if (mode != 'standard' && mode != 'advanced') {
-      _addMessage(Message(role: MessageRole.assistant, content: 'Please reply with Standard or Advanced.', timestamp: DateTime.now()));
+    final selected = choice.trim().toLowerCase();
+    final isAdvanced = selected == 'advanced' || selected == 'advanced code' || selected == 'advanced coding' || selected == 'deepseek';
+    final isStandard = selected == 'standard' || selected == 'standard code' || selected == 'standard coding' || selected == 'normal' || selected == 'basic';
+    if (!isStandard && !isAdvanced) {
+      _addMessage(Message(role: MessageRole.assistant, content: 'Please reply with Standard code or Advanced.', timestamp: DateTime.now()));
       _startTypingResponse();
       return;
     }
+    final mode = isAdvanced ? 'advanced' : 'standard';
     final prompt = _pendingCodingPrompt;
     if (prompt == null) return;
     final history = List<Map<String, String>>.from(_pendingCodingHistory);
