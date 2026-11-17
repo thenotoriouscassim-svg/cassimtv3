@@ -37,117 +37,99 @@ class StatusBarWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final jarvis = context.watch<JarvisService>();
-
     return Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.fromLTRB(18, 10, 14, 10),
       decoration: BoxDecoration(
-        color: JarvisColors.surface,
-        border: Border(bottom: BorderSide(color: JarvisColors.border)),
+        color: JarvisColors.background,
+        border: Border(bottom: BorderSide(color: JarvisColors.border.withOpacity(.7))),
       ),
-      child: Row(
-        children: [
-          // Brand
-          RichText(
-            text: TextSpan(
-              children: [
-                TextSpan(text: 'JARVIS AI ', style: TextStyle(
-                  color: JarvisColors.cyan, fontSize: 11,
-                  fontWeight: FontWeight.bold, letterSpacing: 3,
-                  fontFamily: 'Orbitron',
-                  shadows: [Shadow(color: JarvisColors.cyan.withOpacity(0.6), blurRadius: 8)],
-                )),
-                const TextSpan(text: 'by CassimTV', style: TextStyle(
-                  color: JarvisColors.textSecondary, fontSize: 8,
-                  letterSpacing: 2, fontFamily: 'Orbitron',
-                )),
-              ],
-            ),
-          ),
-
-          const Spacer(),
-          PopupMenuButton<String>(
-            tooltip: 'Choose JARVIS model',
-            onSelected: jarvis.setSelectedModel,
-            color: JarvisColors.surfaceLight,
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 'auto', child: Text('AUTO — Fastest successful model')),
-              PopupMenuItem(value: 'v1', child: Text('JARVIS v1 — Groq')),
-              PopupMenuItem(value: 'v2', child: Text('JARVIS v2 — NVIDIA')),
-              PopupMenuItem(value: 'v3', child: Text('JARVIS v3 — Gemini')),
-              PopupMenuItem(value: 'v4', child: Text('JARVIS v4 — OpenRouter')),
-            ],
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      child: SafeArea(
+        bottom: false,
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
               decoration: BoxDecoration(
-                border: Border.all(color: JarvisColors.cyan.withOpacity(0.7)),
-                borderRadius: BorderRadius.circular(4),
-                color: JarvisColors.cyan.withOpacity(0.08),
+                color: JarvisColors.cyan.withOpacity(.10),
+                borderRadius: BorderRadius.circular(13),
+                border: Border.all(color: JarvisColors.cyan.withOpacity(.24)),
               ),
-              child: Row(
+              child: const Icon(Icons.blur_on_rounded, color: JarvisColors.cyan, size: 23),
+            ),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.tune, color: JarvisColors.cyan, size: 14),
-                  const SizedBox(width: 6),
-                  Text(
-                    jarvis.selectedModelLabel,
-                    style: const TextStyle(
-                      color: JarvisColors.cyan,
-                      fontSize: 9,
-                      letterSpacing: 1,
-                      fontFamily: 'Orbitron',
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  const Icon(Icons.keyboard_arrow_down, color: JarvisColors.cyan, size: 14),
+                children: const [
+                  Text('JARVIS', style: TextStyle(color: JarvisColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w800, letterSpacing: 2.2)),
+                  SizedBox(height: 2),
+                  Text('PERSONAL AI  •  CASSIMTV', style: TextStyle(color: JarvisColors.textDim, fontSize: 8, letterSpacing: 1.35, fontWeight: FontWeight.w600)),
                 ],
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          IconButton(tooltip: 'Chat history', onPressed: () => _showChats(context, jarvis), icon: const Icon(Icons.history, color: JarvisColors.cyan, size: 20)),
-          IconButton(tooltip: 'JARVIS memory', onPressed: () => _showMemory(context), icon: const Icon(Icons.psychology_alt_outlined, color: JarvisColors.cyan, size: 20)),
-
-          // Connection indicator
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: jarvis.isConnected ? JarvisColors.green : JarvisColors.red,
-              ),
-              borderRadius: BorderRadius.circular(2),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 4, height: 4,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: jarvis.isConnected ? JarvisColors.green : JarvisColors.red,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  jarvis.isConnected ? 'ONLINE' : 'OFFLINE',
-                  style: TextStyle(
-                    color: jarvis.isConnected ? JarvisColors.green : JarvisColors.red,
-                    fontSize: 8, letterSpacing: 1, fontFamily: 'Orbitron',
-                  ),
-                ),
+            PopupMenuButton<String>(
+              tooltip: 'Choose assistant model',
+              onSelected: jarvis.setSelectedModel,
+              color: JarvisColors.surface,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: JarvisColors.border)),
+              itemBuilder: (context) => const [
+                PopupMenuItem(value: 'auto', child: Text('AUTO  ·  Fastest available')),
+                PopupMenuItem(value: 'v1', child: Text('JARVIS v1  ·  Groq')),
+                PopupMenuItem(value: 'v2', child: Text('JARVIS v2  ·  NVIDIA')),
+                PopupMenuItem(value: 'v3', child: Text('JARVIS v3  ·  Gemini')),
+                PopupMenuItem(value: 'v4', child: Text('JARVIS v4  ·  OpenRouter')),
               ],
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                decoration: BoxDecoration(
+                  color: JarvisColors.surface,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: JarvisColors.border),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.tune_rounded, size: 15, color: JarvisColors.cyan),
+                  const SizedBox(width: 7),
+                  Text(jarvis.selectedModelLabel, style: const TextStyle(color: JarvisColors.textPrimary, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: .6)),
+                  const SizedBox(width: 3),
+                  const Icon(Icons.keyboard_arrow_down_rounded, size: 17, color: JarvisColors.textSecondary),
+                ]),
+              ),
             ),
-          ),
-
-          const SizedBox(width: 10),
-
-          // Retry connection
-          if (!jarvis.isConnected)
-            GestureDetector(
-              onTap: jarvis.retryConnection,
-              child: const Icon(Icons.refresh, color: JarvisColors.textSecondary, size: 16),
+            const SizedBox(width: 5),
+            IconButton(
+              tooltip: 'Chat history',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _showChats(context, jarvis),
+              icon: const Icon(Icons.history_rounded, color: JarvisColors.textSecondary, size: 21),
             ),
-        ],
+            IconButton(
+              tooltip: 'JARVIS memory',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _showMemory(context),
+              icon: const Icon(Icons.psychology_alt_outlined, color: JarvisColors.textSecondary, size: 21),
+            ),
+            const SizedBox(width: 5),
+            InkWell(
+              onTap: jarvis.isConnected ? null : jarvis.retryConnection,
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                decoration: BoxDecoration(
+                  color: (jarvis.isConnected ? JarvisColors.green : JarvisColors.red).withOpacity(.09),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: (jarvis.isConnected ? JarvisColors.green : JarvisColors.red).withOpacity(.28)),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Container(width: 6, height: 6, decoration: BoxDecoration(shape: BoxShape.circle, color: jarvis.isConnected ? JarvisColors.green : JarvisColors.red)),
+                  const SizedBox(width: 6),
+                  Text(jarvis.isConnected ? 'ONLINE' : 'RETRY', style: TextStyle(color: jarvis.isConnected ? JarvisColors.green : JarvisColors.red, fontSize: 8, fontWeight: FontWeight.w800, letterSpacing: .8)),
+                ]),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
