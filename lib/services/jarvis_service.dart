@@ -30,6 +30,7 @@ class JarvisService extends ChangeNotifier {
   String _activeChatId = '';
   String? _pendingCodingPrompt;
   String _pendingCodingMemoryContext = '';
+  List<Map<String, String>> _pendingCodingHistory = [];
   List<Map<String, dynamic>> get savedChats => _chatSessions.map((c) => Map<String, dynamic>.from(c)).toList();
   String get activeChatId => _activeChatId;
 
@@ -659,6 +660,7 @@ class JarvisService extends ChangeNotifier {
     if (codingRequest) {
       _pendingCodingPrompt = text;
       _pendingCodingMemoryContext = memoryContext;
+      _pendingCodingHistory = List<Map<String, String>>.from(history);
       _addMessage(Message(
         role: MessageRole.assistant,
         content: 'Standard code or Advanced?',
@@ -1013,13 +1015,10 @@ class JarvisService extends ChangeNotifier {
     }
     final prompt = _pendingCodingPrompt!;
     final memory = _pendingCodingMemoryContext;
+    final history = List<Map<String, String>>.from(_pendingCodingHistory);
     _pendingCodingPrompt = null;
     _pendingCodingMemoryContext = '';
-    final history = _conversation.map((m) => {'role': m.role.name, 'content': m.content}).toList();
-    if (history.isNotEmpty && history.last['role'] == 'assistant' &&
-        (history.last['content'] ?? '').contains('Standard code or Advanced')) {
-      history.removeLast();
-    }
+    _pendingCodingHistory = [];
     _addMessage(Message(role: MessageRole.user, content: text, timestamp: DateTime.now()));
     final mode = advanced ? 'advanced' : 'standard';
     _addMessage(Message(role: MessageRole.assistant,
