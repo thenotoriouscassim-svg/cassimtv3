@@ -164,43 +164,66 @@ async function tts(req, env) {
     return new Response(response.body, { headers: { ...cors, "Content-Type": "audio/mpeg", "Cache-Control": "no-store" } });
   } catch (e) { return error("Could not reach Fish Audio: " + e.message, 502); }
 }
+function xmlText(item, tag) {
+  const match = item.match(new RegExp("<" + tag + "(?:\\s[^>]*)?>([\\s\\S]*?)<\\/" + tag + ">", "i"));
+  if (!match) return "";
+  return match[1].replace(/^<!\\[CDATA\\[|\\]\\]>$/g, "").replace(/<[^>]*>/g, " ")
+    .replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;|&#x27;/g, "'")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#(\\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/\\s+/g, " ").trim();
+}
 async function search(req, env) {
-  if (typeof req.query !== "string" || req.query.trim().length < 2 || req.query.length > 1000) return error("Search query must contain between 2 and 1000 characters.", 422);
+  if (typeof req.query !== "string" || req.query.trim().length < 2 || req.query.length > 1000)
+    return error("Search query must contain between 2 and 1000 characters.", 422);
   const query = req.query.trim();
-  if (/\b(weather|forecast|temperature)\b/i.test(query)) {
-    try {
-      const place = query.replace(/\b(weather|forecast|temperature|conditions|today|tomorrow|right now|current|please|what is|what's|in)\b/gi, " ").replace(/\s+/g, " ").trim() || "Durban";
-      const geo = await fetchJson("https://geocoding-api.open-meteo.com/v1/search?name=" + encodeURIComponent(place) + "&count=1&language=en&format=json");
-      const city = geo.results?.[0];
-      if (city) {
-        const u = new URL("https://api.open-meteo.com/v1/forecast");
-        u.search = new URLSearchParams({ latitude: city.latitude, longitude: city.longitude, current: "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m", daily: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max", forecast_days: "2", timezone: "auto" });
-        const data = await fetchJson(u);
-        const cur = data.current || {};
-        const desc = {0:"clear sky",1:"mainly clear",2:"partly cloudy",3:"overcast",45:"foggy",48:"rime fog",51:"light drizzle",53:"drizzle",55:"dense drizzle",61:"light rain",63:"moderate rain",65:"heavy rain",80:"rain showers",81:"moderate rain showers",82:"heavy rain showers",95:"thunderstorms"};
-        const name = [city.name, city.admin1, city.country].filter(Boolean).join(", ");
-        const answer = `Current weather in ${name}: ${desc[cur.weather_code] || "conditions unavailable"}, ${cur.temperature_2m}°C (feels like ${cur.apparent_temperature}°C). Humidity: ${cur.relative_humidity_2m}%. Wind: ${cur.wind_speed_10m} km/h.`;
-        return json({ answer, sources: [{ title: "Open-Meteo weather forecast", url: "https://open-meteo.com/" }], search_queries: [query], provider: "Open-Meteo" });
-      }
-    } catch (_) { /* continue to web search fallback */ }
-  }
-  // DuckDuckGo HTML search; return parsed source links and snippets.
   try {
-    const html = await (await fetch("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(query), { headers: { "User-Agent": "Mozilla/5.0", "Accept": "text/html" } })).text();
-    const results = [];
-    const re = /<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]{0,1800}?class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\//gi;
-    for (const m of html.matchAll(re)) {
-      let url = m[1].replaceAll("&amp;", "&");
-      try { const parsed = new URL(url); if (parsed.hostname.endsWith("duckduckgo.com")) url = parsed.searchParams.get("uddg") || url; } catch {}
-      if (!/^https?:\/\//.test(url)) continue;
-      const clean = s => s.replace(/<[^>]*>/g, " ").replace(/&amp;/g, "&").replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
-      results.push({ title: clean(m[2]), url, snippet: clean(m[3]) });
-      if (results.length >= 8) break;
+    const freshness = /\\b(latest|today|yesterday|this week|breaking|current|war|conflict|iran|israel|ukraine|usa|united states|election|president|attack|ceasefire|strike|sanction)\\b/i.test(query) ? " when:7d" : "";
+    const params = new URLSearchParams({ q: query + freshness, hl: "en-ZA", gl: "ZA", ceid: "ZA:en" });
+    const feedResponse = await fetch("https://news.google.com/rss/search?" + params.toString(), {
+      headers: { "Accept": "application/rss+xml, application/xml, text/xml", "User-Agent": "Mozilla/5.0 JARVIS-AI/1.0" },
+      signal: AbortSignal.timeout(18000)
+    });
+    if (!feedResponse.ok) throw new Error("News search returned HTTP " + feedResponse.status);
+    const xml = await feedResponse.text();
+    const articles = [];
+    for (const match of xml.matchAll(/<item>([\\s\\S]*?)<\\/item>/gi)) {
+      const item = match[1];
+      const title = xmlText(item, "title");
+      let url = xmlText(item, "link");
+      const publisher = xmlText(item, "source") || "News publisher";
+      const published = xmlText(item, "pubDate");
+      const description = xmlText(item, "description").slice(0, 500);
+      if (!title || !url || !/^https?:\\/\\//i.test(url)) continue;
+      if (articles.some(a => a.title.toLowerCase() === title.toLowerCase())) continue;
+      articles.push({ title, publisher, published, description, url });
+      if (articles.length >= 10) break;
     }
-    const unique = [...new Map(results.map(x => [x.url, x])).values()];
-    if (unique.length) return json({ answer: `Here is what I found about ${query}:\n\n` + unique.map((x,i) => `${i+1}. ${x.title}\n${x.snippet}`).join("\n\n"), sources: unique, search_queries: [query], provider: "DuckDuckGo" });
-  } catch (_) {}
-  return error("Live search providers are temporarily unreachable. Please retry shortly.", 502);
+    if (!articles.length) throw new Error("No matching news articles were returned.");
+    const evidence = articles.map((a, i) => `[${i+1}] ${a.title}\nPublisher: ${a.publisher}\nPublished: ${a.published}\nSnippet: ${a.description}\nURL: ${a.url}`).join("\n\n");
+    let answer = "";
+    if (configured(env, "GEMINI_API_KEY")) {
+      const prompt = `You are JARVIS's research analyst. Answer the user's search query using ONLY the retrieved news evidence below. The user is in South Africa, but cover the international story objectively.\n\nUSER QUERY: ${query}\n\nRETRIEVED ARTICLES:\n${evidence}\n\nRULES:\n- Start with a direct 1-2 sentence answer explaining what the latest reporting says.\n- Then give 3-5 concise factual bullet points: what happened, who is involved, when, what is confirmed, and what remains unclear.\n- Cite every factual claim with bracket citations such as [1] or [2][4], matching the article numbers exactly.\n- Distinguish confirmed facts from allegations, analysis and speculation. If sources conflict, say so.\n- Do not invent details, casualty figures, dates, motives, or outcomes absent from the supplied evidence.\n- State the publication date range represented by the articles.\n- If the evidence is weak or headlines are ambiguous, say that plainly rather than guessing.\n- Do not fabricate links or cite sources not in the list.\n- Do not add a Sources section; the app displays verified retrieved links separately.`;
+      try {
+        const data = await fetchJson(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 1600 } })
+        }, 30000);
+        answer = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("").trim();
+      } catch (e) { console.error("Search synthesis failed:", e.message); }
+    }
+    if (!answer) {
+      answer = `I found ${articles.length} recent news reports related to "${query}", but I could not generate a reliable summary. Here are the retrieved reports; open the sources to verify the details.`;
+    }
+    return json({
+      answer,
+      sources: articles.map(a => ({ title: a.title, publisher: a.publisher, published: a.published, url: a.url, snippet: a.description })),
+      search_queries: [query],
+      provider: "Google News"
+    });
+  } catch (e) {
+    console.error("JARVIS live search error:", e.message);
+    return error("Live news search is temporarily unavailable: " + String(e.message || e).slice(0, 220), 502);
+  }
 }
 async function handle(request, env) {
   const url = new URL(request.url);
