@@ -200,7 +200,6 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   Future<void> _endCall() async {
     _active = false; _recordingLimit?.cancel();
     if (_recording) { _recording = false; await _recorder.stop(); }
-    await _recorder.dispose();
     if (mounted) Navigator.of(context).pop();
   }
 
