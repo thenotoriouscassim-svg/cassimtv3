@@ -299,30 +299,48 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     _silenceTimer?.cancel();
     _restartTimer?.cancel();
     _finalizeTimer?.cancel();
+    var responseSucceeded = false;
     await _speech.stop();
     await Future.delayed(const Duration(milliseconds: 450));
     if (mounted) setState(() => _status = 'Processing…');
     try {
+      final service = context.read<JarvisService>();
       final spoken = text.trim();
       if (RegExp(r'^jarvis[.!?, ]*$', caseSensitive: false).hasMatch(spoken)) {
-        await context.read<JarvisService>().speakText('At your service.');
+        await service.speakText('At your service.');
+        responseSucceeded = service.lastSpeechSucceeded;
       } else {
         final command = spoken.replaceFirst(RegExp(r'^jarvis[, ]+', caseSensitive: false), '').trim();
-        await context.read<JarvisService>().sendTextMessage(
+        await service.sendTextMessage(
           command.isEmpty ? spoken : command,
           speakResponse: true,
           memoryContext: context.read<MemoryService>().buildMemoryContext(),
         );
+        responseSucceeded = service.lastSpeechSucceeded;
+        if (!responseSucceeded) {
+          final last = service.conversation.isNotEmpty ? service.conversation.last : null;
+          if (last?.isError == true && mounted) {
+            setState(() => _status = 'Cloud response failed — tap mic to retry');
+          }
+        }
       }
+    } catch (error) {
+      debugPrint('JARVIS call turn failed: $error');
+      responseSucceeded = false;
     } finally {
       _busy = false;
       _handlingTurn = false;
       if (_active && mounted) {
-        setState(() => _status = 'Your turn…');
-        await Future.delayed(const Duration(milliseconds: 500));
-        if (_active && mounted) {
-          _holdListening = false;
-          await _listen();
+        if (responseSucceeded) {
+          setState(() => _status = 'Your turn…');
+          await Future.delayed(const Duration(milliseconds: 500));
+          if (_active && mounted) {
+            _holdListening = false;
+            await _listen();
+          }
+        } else {
+          _holdListening = true;
+          setState(() => _status = 'No spoken reply — tap mic to retry');
         }
       }
     }
