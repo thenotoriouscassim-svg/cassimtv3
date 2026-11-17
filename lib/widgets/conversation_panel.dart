@@ -43,6 +43,7 @@ class ConversationPanel extends StatefulWidget {
 class _ConversationPanelState extends State<ConversationPanel> {
   final ScrollController _scroll = ScrollController();
   int _lastCount = 0;
+  int _lastContentLength = 0;
 
   @override
   void dispose() {
@@ -75,8 +76,12 @@ class _ConversationPanelState extends State<ConversationPanel> {
   Widget build(BuildContext context) {
     final jarvis = context.watch<JarvisService>();
     final messages = jarvis.conversation;
-    if (messages.length > _lastCount) _scrollToBottom();
+    final latestLength = messages.isEmpty ? 0 : messages.last.content.length;
+    if (messages.length > _lastCount || latestLength > _lastContentLength) {
+      _scrollToBottom();
+    }
     _lastCount = messages.length;
+    _lastContentLength = latestLength;
 
     if (messages.isEmpty) return _buildWelcome(context);
 
