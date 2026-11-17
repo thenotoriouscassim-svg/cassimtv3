@@ -290,7 +290,7 @@ async function search(req, env) {
       for(const chunk of chunks){
         const web=chunk.web||chunk;
         const uri=web.uri||web.url;
-        if(!uri||!/^https?:\\/\\//i.test(uri)||sources.some(s=>s.url===uri)) continue;
+        if(!uri||!/^https?:\/\//i.test(uri)||sources.some(s=>s.url===uri)) continue;
         sources.push({title:web.title||new URL(uri).hostname,publisher:new URL(uri).hostname,published:"",url:uri,snippet:"Retrieved through Google Search grounding.",page_read:true,read_error:null});
       }
       if(groundedAnswer&&sources.length){
