@@ -261,113 +261,78 @@ function cleanHtml(html) {
   return decodeHtml(String(html || "").replace(/<(script|style|noscript|svg|nav|footer|header|form|iframe|aside)[^>]*>[\s\S]*?<\/\1>/gi," ").replace(/<!--[\s\S]*?-->/g," ").replace(/<(br|\/p|\/div|\/article|\/section|\/h[1-6]|\/li)[^>]*>/gi,"\n").replace(/<[^>]+>/g," ")).replace(/[ \t\f\v]+/g," ").replace(/\n\s+/g,"\n").replace(/\n{3,}/g,"\n\n").trim();
 }
 async function search(req, env) {
-  if (typeof req.query !== "string" || req.query.trim().length < 2 || req.query.length > 1000) return error("Search query must contain between 2 and 1000 characters.",422);
-  const query=req.query.trim(), headers={"User-Agent":"Mozilla/5.0 (compatible; JARVIS-AI/2.0)","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"};
-  const candidates=[], errors=[];
-  // Preferred path: Gemini's native Google Search grounding. This avoids fragile
-  // HTML scraping and lets Gemini search, compare live pages and return citations.
-  if(configured(env,"GEMINI_API_KEY")){
-    try{
-      const prompt="You are JARVIS, a live web research assistant. Search the web now for: "+query+
-        "\\nUse several relevant, credible and preferably recent sources. Read and compare the available sources before answering. "+
-        "Give a useful original synthesis, not a list of headlines. Distinguish confirmed facts from claims and opinion, "+
-        "include dates where relevant, flag disagreements and uncertainty, and never invent details. Cite sources using the "+
-        "grounded citations supplied by the search system. If the evidence is limited, say so.";
-      const grounded=await fetchJson("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",{
-        method:"POST",
-        headers:{"Content-Type":"application/json","x-goog-api-key":env.GEMINI_API_KEY},
-        body:JSON.stringify({
-          contents:[{role:"user",parts:[{text:prompt}]}],
-          tools:[{google_search:{}}],
-          generationConfig:{temperature:1,maxOutputTokens:2600}
-        })
-      },65000);
-      const candidate=grounded.candidates?.[0];
-      const groundedAnswer=(candidate?.content?.parts||[]).map(p=>p.text||"").join("").trim();
-      const metadata=candidate?.groundingMetadata||candidate?.grounding_metadata||{};
-      const chunks=metadata.groundingChunks||metadata.grounding_chunks||[];
-      const sources=[];
-      for(const chunk of chunks){
-        const web=chunk.web||chunk;
-        const uri=web.uri||web.url;
-        if(!uri||!/^https?:\/\//i.test(uri)||sources.some(s=>s.url===uri)) continue;
-        sources.push({title:web.title||new URL(uri).hostname,publisher:new URL(uri).hostname,published:"",url:uri,snippet:"Retrieved through Google Search grounding.",page_read:true,read_error:null});
+  if (typeof req.query !== "string" || req.query.trim().length < 2 || req.query.length > 1000)
+    return error("Search query must contain between 2 and 1000 characters.", 422);
+  const query = req.query.trim();
+  try {
+    const freshness = /\b(latest|today|yesterday|this week|breaking|current|war|conflict|iran|israel|ukraine|usa|united states|election|president|attack|ceasefire|strike|sanction)\b/i.test(query) ? " when:7d" : "";
+    const encodedQuery = query + freshness;
+    const feeds = [
+      {
+        provider: "Google News",
+        url: "https://news.google.com/rss/search?" + new URLSearchParams({ q: encodedQuery, hl: "en-ZA", gl: "ZA", ceid: "ZA:en" })
+      },
+      {
+        provider: "Bing News",
+        url: "https://www.bing.com/news/search?" + new URLSearchParams({ q: query, format: "rss", setlang: "en-ZA", cc: "ZA" })
       }
-      if(groundedAnswer&&sources.length){
-        return json({
-          answer:groundedAnswer,
-          sources:sources.slice(0,10),
-          search_queries:metadata.webSearchQueries||metadata.web_search_queries||[query],
-          provider:"Gemini Google Search grounding",
-          pages_read:sources.length,
-          results_found:sources.length
-        });
-      }
-      errors.push("Google Search grounding returned no answer or source citations.");
-    }catch(e){
-      console.error("JARVIS Google Search grounding failed:",e.message);
-      errors.push("Google Search grounding: "+String(e.message||e).slice(0,220));
-    }
-  }
-  try{
-    try {
-      const url="https://www.bing.com/search?"+new URLSearchParams({q:query,setlang:"en-ZA",cc:"ZA",count:"10"});
-      const response=await fetch(url,{headers,signal:AbortSignal.timeout(12000)});
-      if(!response.ok) throw new Error("HTTP "+response.status);
-      const html=await response.text();
-      for(const match of html.matchAll(/<li class="b_algo"[\s\S]*?<\/li>/gi)){
-        const block=match[0], link=block.match(/<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
-        if(!link) continue;
-        const url=decodeHtml(link[1]); if(!/^https?:\/\//i.test(url)||/bing\.com|microsoft\.com\/search/i.test(url)) continue;
-        const title=cleanHtml(link[2]), sm=block.match(/<p[^>]*>([\s\S]*?)<\/p>/i), snippet=sm?cleanHtml(sm[1]):"";
-        if(title&&!candidates.some(x=>x.url===url)) candidates.push({title,url,snippet,publisher:new URL(url).hostname,published:""});
-      }
-    } catch(e){errors.push("General web search: "+String(e.message||e));}
-    const freshness=/\b(latest|today|yesterday|this week|breaking|current|war|conflict|iran|israel|ukraine|usa|united states|election|president|attack|ceasefire|strike|sanction)\b/i.test(query)?" when:7d":"";
-    const feeds=[
-      {provider:"Google News",url:"https://news.google.com/rss/search?"+new URLSearchParams({q:query+freshness,hl:"en-ZA",gl:"ZA",ceid:"ZA:en"})},
-      {provider:"Bing News",url:"https://www.bing.com/news/search?"+new URLSearchParams({q:query,format:"rss",setlang:"en-ZA",cc:"ZA"})}
     ];
-    for(const feed of feeds){
-      try{
-        const response=await fetch(feed.url,{headers:{...headers,"Accept":"application/rss+xml, application/xml, text/xml"},signal:AbortSignal.timeout(10000)});
-        if(!response.ok) throw new Error("HTTP "+response.status);
-        const xml=await response.text();
-        for(const match of xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)){
-          const item=match[1],title=xmlText(item,"title"),url=xmlText(item,"link");
-          if(!title||!/^https?:\/\//i.test(url)||candidates.some(x=>x.url===url)) continue;
-          candidates.push({title,url,publisher:xmlText(item,"source")||feed.provider,published:xmlText(item,"pubDate"),snippet:xmlText(item,"description").slice(0,700)});
-          if(candidates.length>=12) break;
+    const articles = [];
+    const feedErrors = [];
+    for (const feed of feeds) {
+      try {
+        const response = await fetch(feed.url, {
+          headers: { "Accept": "application/rss+xml, application/xml, text/xml", "User-Agent": "Mozilla/5.0 (compatible; JARVIS-AI/1.0)" },
+          signal: AbortSignal.timeout(12000)
+        });
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        const xml = await response.text();
+        for (const match of xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)) {
+          const item = match[1];
+          const title = xmlText(item, "title");
+          const url = xmlText(item, "link");
+          const publisher = xmlText(item, "source") || feed.provider;
+          const published = xmlText(item, "pubDate");
+          const description = xmlText(item, "description").slice(0, 500);
+          if (!title || !url || !/^https?:\/\//i.test(url)) continue;
+          if (articles.some(a => a.title.toLowerCase() === title.toLowerCase() || a.url === url)) continue;
+          articles.push({ title, publisher, published, description, url });
+          if (articles.length >= 10) break;
         }
-      }catch(e){errors.push(feed.provider+": "+String(e.message||e));}
-      if(candidates.length>=12) break;
+      } catch (e) {
+        feedErrors.push(feed.provider + ": " + String(e.message || e));
+        console.error("JARVIS " + feed.provider + " search failed:", e.message);
+      }
+      if (articles.length >= 10) break;
     }
-    if(!candidates.length) throw new Error("All live search providers failed to return results. "+errors.join("; ").slice(0,350));
-    const pages=await Promise.all(candidates.slice(0,7).map(async article=>{
-      try{
-        const response=await fetch(article.url,{headers,redirect:"follow",signal:AbortSignal.timeout(10000)});
-        if(!response.ok) throw new Error("HTTP "+response.status);
-        const type=response.headers.get("content-type")||"";
-        if(!/text\/html|application\/xhtml\+xml/i.test(type)) throw new Error("Not an HTML page");
-        const html=(await response.text()).slice(0,1200000), titleTag=html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-        const desc=html.match(/<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["']([^"']*)["'][^>]*>/i);
-        const articleMatch=html.match(/<(article|main)[^>]*>([\s\S]*?)<\/\1>/i), body=cleanHtml(articleMatch?articleMatch[2]:html).slice(0,9000);
-        return {...article,title:titleTag?cleanHtml(titleTag[1])||article.title:article.title,snippet:[desc?decodeHtml(desc[1]):"",body].filter(Boolean).join("\n").slice(0,9000),read:body.length>350,final_url:response.url||article.url};
-      }catch(e){return {...article,read:false,read_error:String(e.message||e).slice(0,120)};}
-    }));
-    const evidence=pages.map((a,i)=>"["+ (i+1)+"] "+a.title+"\nPublisher: "+a.publisher+"\nPublished: "+(a.published||"Date not supplied")+"\nPage read: "+(a.read?"Yes — webpage text retrieved":"No — search snippet only")+"\nContent: "+(a.snippet||"No readable content returned.").slice(0,6500)+"\nURL: "+(a.final_url||a.url)).join("\n\n");
-    let answer="";
-    if(configured(env,"GEMINI_API_KEY")){
-      const prompt="You are JARVIS, an independent web research assistant. Answer using ONLY the retrieved evidence below. Do not pretend pages were read if marked No.\n\nQUESTION: "+query+"\n\nSOURCES:\n"+evidence+"\n\nWrite an original useful synthesis. Start with a direct answer, then key findings in concise bullets or paragraphs. Cite factual claims with [1], [2] matching source numbers. Separate facts from claims, opinion and uncertainty. Compare sources and note disagreements. Mention when only a search snippet was available. Never invent dates, figures or details. If evidence is insufficient, say so. Finish with a brief takeaway.";
-      try{
-        const data=await fetchJson("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key="+encodeURIComponent(env.GEMINI_API_KEY),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{role:"user",parts:[{text:prompt}]}],generationConfig:{temperature:0.25,maxOutputTokens:2200}})},35000);
-        answer=(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||"").join("").trim();
-      }catch(e){console.error("JARVIS web research synthesis failed:",e.message);}
+    if (!articles.length) throw new Error("All live search feeds failed or returned no matching articles. " + feedErrors.join("; ").slice(0, 250));
+    const evidence = articles.map((a, i) => `[${i+1}] ${a.title}\nPublisher: ${a.publisher}\nPublished: ${a.published}\nSnippet: ${a.description}\nURL: ${a.url}`).join("\n\n");
+    let answer = "";
+    if (configured(env, "GEMINI_API_KEY")) {
+      const prompt = `You are JARVIS's research analyst. Answer the user's search query using ONLY the retrieved news evidence below. The user is in South Africa, but cover the international story objectively.\n\nUSER QUERY: ${query}\n\nRETRIEVED ARTICLES:\n${evidence}\n\nRULES:\n- Start with a direct 1-2 sentence answer explaining what the latest reporting says.\n- Then give 3-5 concise factual bullet points: what happened, who is involved, when, what is confirmed, and what remains unclear.\n- Cite every factual claim with bracket citations such as [1] or [2][4], matching the article numbers exactly.\n- Distinguish confirmed facts from allegations, analysis and speculation. If sources conflict, say so.\n- Do not invent details, casualty figures, dates, motives, or outcomes absent from the supplied evidence.\n- State the publication date range represented by the articles.\n- If the evidence is weak or headlines are ambiguous, say that plainly rather than guessing.\n- Do not fabricate links or cite sources not in the list.\n- Do not add a Sources section; the app displays verified retrieved links separately.`;
+      try {
+        const data = await fetchJson(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 1600 } })
+        }, 30000);
+        answer = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("").trim();
+      } catch (e) { console.error("Search synthesis failed:", e.message); }
     }
-    if(!answer) answer="I retrieved "+pages.length+" search results and opened "+pages.filter(p=>p.read).length+" webpages. I could not generate a reliable AI synthesis, so please review the source links below.";
-    return json({answer,sources:pages.map(a=>({title:a.title,publisher:a.publisher,published:a.published,url:a.final_url||a.url,snippet:(a.snippet||"").slice(0,900),page_read:a.read,read_error:a.read_error||null})),search_queries:[query],provider:"Bing Web Search + Google News + Bing News",pages_read:pages.filter(p=>p.read).length,results_found:pages.length});
-  }catch(e){console.error("JARVIS live research error:",e.message);return error("Live web research is temporarily unavailable: "+String(e.message||e).slice(0,220),502);}
+    if (!answer) {
+      answer = `I found ${articles.length} recent news reports related to "${query}", but I could not generate a reliable summary. Here are the retrieved reports; open the sources to verify the details.`;
+    }
+    return json({
+      answer,
+      sources: articles.map(a => ({ title: a.title, publisher: a.publisher, published: a.published, url: a.url, snippet: a.description })),
+      search_queries: [query],
+      provider: "Google News"
+    });
+  } catch (e) {
+    console.error("JARVIS live search error:", e.message);
+    return error("Live news search is temporarily unavailable: " + String(e.message || e).slice(0, 220), 502);
+  }
 }
+
 
 // Account security and cloud-synced personal data.
 const encoder = new TextEncoder();
