@@ -291,51 +291,18 @@ class JarvisService extends ChangeNotifier {
         _startTypingResponse();
       }
     } catch (error) {
-      // A failed live search should not become JARVIS's entire answer.
-      // Ask the normal assistant to help from existing knowledge, while
-      // explicitly telling it that no live results were retrieved.
-      try {
-        final fallback = await http.post(
-          Uri.parse('$_backendUrl/chat'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'message': 'The user asked: "$cleanQuery". Live web search was unavailable, so no current sources were retrieved. Answer helpfully using your existing knowledge only. Clearly mention that you could not verify live/current information, and do not claim to have searched the web.',
-            'conversation_history': <Map<String, String>>[],
-            'voice_mode': speakResponse,
-          }),
-        ).timeout(const Duration(seconds: 90));
-        if (fallback.statusCode == 200) {
-          final data = jsonDecode(fallback.body) as Map<String, dynamic>;
-          final answer = data['response']?.toString().trim() ?? '';
-          if (answer.isNotEmpty) {
-            _addMessage(Message(
-              role: MessageRole.assistant,
-              content: answer,
-              timestamp: DateTime.now(),
-            ));
-            if (speakResponse) {
-              await _speakResponse(answer);
-            } else {
-              _startTypingResponse();
-            }
-            return;
-          }
-        }
-      } catch (fallbackError) {
-        debugPrint('JARVIS search fallback failed: $fallbackError');
-      }
+      // Never send a failed search to the normal chat model as though it were research.
       debugPrint('JARVIS live search failed: $error');
-      const message = 'Sir, live web search is temporarily unavailable. I can still help with what I already know, but I cannot verify the latest information right now.';
+      final message = 'Sir, the live search request failed: ${error.toString().replaceFirst('Exception: ', '')}. No live results were retrieved, so I will not present an ordinary AI answer as current research.';
       _addMessage(Message(
         role: MessageRole.assistant,
         content: message,
         timestamp: DateTime.now(),
-        isError: false,
+        isError: true,
       ));
       if (speakResponse) await _speakResponse(message);
       _setState(JarvisState.standby);
     }
-  }
 
   Future<String> transcribeAudio(File audioFile) async {
     final request = http.MultipartRequest('POST', Uri.parse(_backendUrl + '/transcribe'));
