@@ -293,7 +293,7 @@ class JarvisService extends ChangeNotifier {
     } catch (error) {
       // Never send a failed search to the normal chat model as though it were research.
       debugPrint('JARVIS live search failed: $error');
-      final message = 'Sir, the live search request failed: ${error.toString().replaceFirst('Exception: ', '')}. No live results were retrieved, so I will not present an ordinary AI answer as current research.';
+      final message = "Sir, the live search request failed: ${error.toString().replaceFirst('Exception: ', '')}. No live results were retrieved, so I will not present an ordinary AI answer as current research.";
       _addMessage(Message(
         role: MessageRole.assistant,
         content: message,
@@ -303,6 +303,7 @@ class JarvisService extends ChangeNotifier {
       if (speakResponse) await _speakResponse(message);
       _setState(JarvisState.standby);
     }
+  }
 
   Future<String> transcribeAudio(File audioFile) async {
     final request = http.MultipartRequest('POST', Uri.parse(_backendUrl + '/transcribe'));
