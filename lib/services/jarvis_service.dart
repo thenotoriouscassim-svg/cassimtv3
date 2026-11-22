@@ -267,26 +267,16 @@ class JarvisService extends ChangeNotifier {
       final sources = (data['sources'] as List<dynamic>? ?? [])
           .whereType<Map<String, dynamic>>()
           .toList();
-      final buffer = StringBuffer(answer);
-      if (sources.isNotEmpty) {
-        buffer.write('\n\nSources:');
-        for (final source in sources.take(8)) {
-          final title = (source['title'] ?? 'Source').toString().replaceAll('[', '(').replaceAll(']', ')');
-          final url = (source['url'] ?? '').toString();
-          if (url.startsWith('https://') || url.startsWith('http://')) {
-            buffer.write('\n- $title: $url');
-          }
-        }
-      } else {
-        buffer.write('\n\nLive search was used, but the provider returned no source links.');
-      }
+      // The backend's answer contains natural inline Markdown hyperlinks.
+      // Do not append a raw source dump; it makes the assistant sound like a search report.
+      final cleanAnswer = answer;
       _addMessage(Message(
         role: MessageRole.assistant,
-        content: buffer.toString(),
+        content: cleanAnswer,
         timestamp: DateTime.now(),
       ));
       if (speakResponse) {
-        await _speakResponse(buffer.toString());
+        await _speakResponse(cleanAnswer);
       } else {
         _startTypingResponse();
       }
