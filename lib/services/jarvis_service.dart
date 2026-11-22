@@ -810,6 +810,19 @@ class JarvisService extends ChangeNotifier {
       return;
     }
 
+    // Automatically research questions about recent or changing information.
+    final needsLiveResearch = RegExp(
+      r'\b(latest|today|yesterday|right now|currently|current|recent|newly|this week|this month|this year|202[5-9]|reviews?|reviewed|ratings?|score|released?|release date|launch(?:ed)?|price|pricing|available now|update|breaking|news|as of)\b',
+      caseSensitive: false,
+    ).hasMatch(trimmed) || RegExp(
+      r'\b(what happened to|what is happening with|has .{2,80} released|is .{2,80} out yet|who won|who is the current|what are people saying about)\b',
+      caseSensitive: false,
+    ).hasMatch(trimmed);
+    if (needsLiveResearch) {
+      await searchWeb(trimmed, speakResponse: speakResponse);
+      return;
+    }
+
     final isCurrentNewsTopic =
         RegExp(r'\\b(iran|usa|united states|israel|palestine|ukraine|russia|lebanon|yemen|syria|gaza|nato|china|taiwan)\\b', caseSensitive: false).hasMatch(trimmed) &&
         RegExp(r'\\b(war|conflict|attack|strike|missile|ceasefire|invasion|bombing|latest|news|today|update|tensions)\\b', caseSensitive: false).hasMatch(trimmed);
