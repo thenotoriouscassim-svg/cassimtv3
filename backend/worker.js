@@ -121,6 +121,22 @@ async function callVoice(req, env) {
 async function chat(req, env) {
   if (typeof req.message !== "string" || !req.message.trim() || req.message.length > 12000)
     return error("Message must contain between 1 and 12000 characters.", 422);
+  // Shared automatic research routing: applies to Android, web and every /chat client.
+  const question = req.message.trim();
+  const needsLiveSearch =
+    /\b(latest|today|yesterday|right now|currently|current|recent|newly|this week|this month|this year|202[5-9]|reviews?|reviewed|ratings?|score|released?|release date|launch(?:ed)?|price|pricing|available now|update|breaking|news|as of)\b/i.test(question) ||
+    /\b(what happened to|what is happening with|has .{2,80} released|is .{2,80} out yet|who won|who is the current|what are people saying about)\b/i.test(question);
+  if (needsLiveSearch) {
+    const researched = await search({ query: question }, env);
+    if (!researched.ok) return researched;
+    const result = await researched.json();
+    const citations = (result.sources || []).slice(0, 6).map((source, i) =>
+      "[" + (i + 1) + "] " + source.title + " — " + source.url
+    ).join("\n");
+    const answer = String(result.answer || "").trim() +
+      (citations ? "\n\nSources:\n" + citations : "");
+    return json({ response: answer, sources: result.sources || [], model_choice: req.model_choice || "auto", selection: "auto_search" });
+  }
   if (req.voice_mode) {
     try { const result = await callVoice(req, env); return json({ response: result.response, model_choice: result.model, selection: "auto" }); }
     catch (e) {
