@@ -130,11 +130,9 @@ async function chat(req, env) {
     const researched = await search({ query: question }, env);
     if (!researched.ok) return researched;
     const result = await researched.json();
-    const citations = (result.sources || []).slice(0, 6).map((source, i) =>
-      "[" + (i + 1) + "] " + source.title + " — " + source.url
-    ).join("\n");
-    const answer = String(result.answer || "").trim() +
-      (citations ? "\n\nSources:\n" + citations : "");
+    // The synthesis already contains natural inline Markdown hyperlinks.
+    // Keep structured sources in the API payload, but never append a raw bibliography to chat.
+    const answer = String(result.answer || "").trim();
     return json({ response: answer, sources: result.sources || [], model_choice: req.model_choice || "auto", selection: "auto_search" });
   }
   if (req.voice_mode) {
@@ -342,7 +340,7 @@ async function search(req, env) {
   const evidence=pages.map((a,i)=>"["+(i+1)+"] "+a.title+"\nPublisher: "+a.publisher+(a.published?"\nPublished: "+a.published:"")+"\nURL: "+a.url+"\nSearch snippet: "+(a.snippet||"")+"\nPage content: "+(a.page_text||"Page unavailable; rely only on title and snippet.")).join("\n\n");
   let answer="";
   if(configured(env,"GEMINI_API_KEY")) {
-    const prompt="You are JARVIS, the user's personal assistant. Answer the user's actual question using the retrieved web evidence. Do not dump a list of search results.\n\nUSER QUESTION: "+query+"\n\nWEB EVIDENCE:\n"+evidence+"\n\nRules:\n- Start with a direct answer. For reviews, report consensus and scores only when present in evidence; distinguish critic and user scores.\n- Use fetched page content where available; never pretend snippets are full articles.\n- Cite factual claims inline as [1], [2], etc.\n- Include publication dates when available; distinguish old from current information.\n- Compare sources and explain disagreements.\n- Never invent facts, scores, dates, prices, quotes or conclusions.\n- Retrieved current evidence takes priority over outdated training knowledge.\n- If evidence is insufficient, say what is missing.\n- Be conversational, intelligent, concise and naturally JARVIS-like. Address the user as sir occasionally.\n- Synthesise the evidence into an answer; do not output raw search results.";
+    const prompt="You are JARVIS, a personal assistant speaking naturally to the user. Answer the exact question using the retrieved evidence.\n\nUSER QUESTION: "+query+"\n\nWEB EVIDENCE:\n"+evidence+"\n\nSTRICT RESPONSE STYLE:\n- Give a short, useful summary in natural conversational language, as if answering the user directly. Usually 1 short paragraph plus at most 3 concise bullets when they genuinely help.\n- Do NOT write a news article, formal report, essay, review roundup, or long introduction.\n- Do NOT use headings like Critic Consensus, User Consensus, In short, or Here is how the scores break down unless the user explicitly asks for a detailed breakdown.\n- For reviews/opinions, clearly summarise what critics say and what ordinary players/users say, and explain the main difference in plain language. Do not over-focus on scores; mention a score only if it is useful and clearly supported.\n- Put source links naturally inside the relevant sentence using Markdown hyperlinks, e.g. [Metacritic's review scores](https://...). Use only URLs from the evidence. Prefer 2-4 useful links, not a bibliography.\n- NEVER add numbered citations like [1] or [2], a Sources section, a References section, or a list of raw URLs. The app displays Markdown hyperlinks directly.\n- Use fetched page content where available; never pretend snippets are full articles. Never invent facts, scores, dates, prices, quotes or conclusions.\n- Retrieved current evidence takes priority over outdated training knowledge. If evidence is insufficient or sources conflict, say so briefly.\n- Be concise, natural, intelligent and JARVIS-like. Address the user as sir occasionally, not in every reply.";
     try {
       const data=await fetchJson("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key="+encodeURIComponent(env.GEMINI_API_KEY),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{role:"user",parts:[{text:prompt}]}],generationConfig:{temperature:0.2,maxOutputTokens:2200}})},45000);
       answer=(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||"").join("").trim();
