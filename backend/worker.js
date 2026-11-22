@@ -261,104 +261,80 @@ function cleanHtml(html) {
   return decodeHtml(String(html || "").replace(/<(script|style|noscript|svg|nav|footer|header|form|iframe|aside)[^>]*>[\s\S]*?<\/\1>/gi," ").replace(/<!--[\s\S]*?-->/g," ").replace(/<(br|\/p|\/div|\/article|\/section|\/h[1-6]|\/li)[^>]*>/gi,"\n").replace(/<[^>]+>/g," ")).replace(/[ \t\f\v]+/g," ").replace(/\n\s+/g,"\n").replace(/\n{3,}/g,"\n\n").trim();
 }
 async function search(req, env) {
-  if (typeof req.query !== "string" || req.query.trim().length < 2 || req.query.length > 1000)
-    return error("Search query must contain between 2 and 1000 characters.", 422);
+  if (typeof req.query !== "string" || req.query.trim().length < 2 || req.query.length > 1000) return error("Search query must contain between 2 and 1000 characters.", 422);
   const query = req.query.trim();
+  const results = [], errors = [];
+  // Search the general web first, rather than relying on news-only RSS.
   try {
-    const freshness = /\b(latest|today|yesterday|this week|breaking|current|war|conflict|iran|israel|ukraine|usa|united states|election|president|attack|ceasefire|strike|sanction)\b/i.test(query) ? " when:7d" : "";
-    const encodedQuery = query + freshness;
-    const feeds = [
-      {
-        provider: "Google News",
-        url: "https://news.google.com/rss/search?" + new URLSearchParams({ q: encodedQuery, hl: "en-ZA", gl: "ZA", ceid: "ZA:en" })
-      },
-      {
-        provider: "Bing News",
-        url: "https://www.bing.com/news/search?" + new URLSearchParams({ q: query, format: "rss", setlang: "en-ZA", cc: "ZA" })
-      }
-    ];
-    const articles = [];
-    const feedErrors = [];
-    for (const feed of feeds) {
-      try {
-        const response = await fetch(feed.url, {
-          headers: { "Accept": "application/rss+xml, application/xml, text/xml", "User-Agent": "Mozilla/5.0 (compatible; JARVIS-AI/1.0)" },
-          signal: AbortSignal.timeout(12000)
-        });
-        if (!response.ok) throw new Error("HTTP " + response.status);
-        const xml = await response.text();
-        for (const match of xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)) {
-          const item = match[1];
-          const title = xmlText(item, "title");
-          const url = xmlText(item, "link");
-          const publisher = xmlText(item, "source") || feed.provider;
-          const published = xmlText(item, "pubDate");
-          const description = xmlText(item, "description").slice(0, 500);
-          if (!title || !url || !/^https?:\/\//i.test(url)) continue;
-          if (articles.some(a => a.title.toLowerCase() === title.toLowerCase() || a.url === url)) continue;
-          articles.push({ title, publisher, published, description, url });
-          if (articles.length >= 10) break;
-        }
-      } catch (e) {
-        feedErrors.push(feed.provider + ": " + String(e.message || e));
-        console.error("JARVIS " + feed.provider + " search failed:", e.message);
-      }
-      if (articles.length >= 10) break;
-    }
-    if (!articles.length) throw new Error("All live search feeds failed or returned no matching articles. " + feedErrors.join("; ").slice(0, 250));
-    const evidence = articles.map((a, i) => `[${i+1}] ${a.title}\nPublisher: ${a.publisher}\nPublished: ${a.published}\nSnippet: ${a.description}\nURL: ${a.url}`).join("\n\n");
-    let answer = "";
-    if (configured(env, "GEMINI_API_KEY")) {
-      const prompt = `You are JARVIS — not a news anchor, not a wire-service reporter, and not a generic summarisation bot. You are the user's personal AI assistant: exceptionally intelligent, observant, composed, dryly sarcastic, witty, confident, and occasionally cheeky. Your personality must come through naturally in every search response, while remaining respectful and accurate. Address the user as "sir" occasionally, never in every paragraph.
-
-Your task is to independently analyse ALL of the retrieved evidence and explain the story in your own JARVIS voice. The search engine has only gathered evidence; YOU are responsible for interpreting it, deciding what matters, connecting the dots when the evidence supports it, and explaining the result clearly. Do not copy headlines into a news bulletin or simply repackage snippets. Do not mention that you are an AI model or discuss your search implementation.
-
-USER QUERY: ${query}
-
-RETRIEVED ARTICLES:
-${evidence}
-
-HOW TO RESPOND:
-1. Open with a short, natural JARVIS-style line that directly answers the query and sets the scene. A little dry humour or sarcasm is welcome when appropriate, but never make light of deaths, suffering, disasters, or other serious harm.
-2. Give the reader a clear, readable synthesis of the key developments across the retrieved reports. Group related facts together instead of writing one bullet per article. Explain who did what, when, and why it matters when the evidence supports it.
-3. Include a section called "What matters" for the most important implications or developments.
-4. Include a section called "JARVIS's assessment" with your own reasoned interpretation. Clearly label inference and uncertainty; never present speculation as confirmed fact.
-5. Finish with a concise bottom line. Keep the overall response useful and proportionate to the amount and quality of evidence; usually around 180–350 words, shorter for simple queries.
-6. Cite factual claims inline using the exact article numbers, e.g. [1] or [2][4]. Citations must correspond to the supplied articles.
-7. Identify the publication date range represented by the evidence when relevant. Distinguish confirmed facts, allegations, commentary, and unknowns. If sources conflict or evidence is thin, say so plainly.
-8. Never invent facts, casualty figures, dates, motives, quotations, outcomes, or source details. Use ONLY the supplied evidence. Do not claim to have read full articles when only titles and snippets were retrieved.
-9. Do not add a Sources section or fabricate URLs; the app displays the retrieved source links separately.
-
-VOICE AND STYLE:
-- Sound like JARVIS speaking directly to his user, not a journalist filing a report.
-- Be conversational, sharp, articulate, and subtly sarcastic. Use occasional lines such as "Well, that escalated quickly, sir" only when they genuinely fit.
-- Avoid repetitive openings, canned phrases, excessive "sir", robotic disclaimers, and over-the-top jokes.
-- Do not force sarcasm into tragedies or sensitive stories. In serious situations, be calm, empathetic, and precise.
-- Do not say "Here are the retrieved reports" or describe the results as a pile of headlines.
-- Do not add unsupported opinions merely to sound confident.`;
-      try {
-        const data = await fetchJson(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 1600 } })
-        }, 30000);
-        answer = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("").trim();
-      } catch (e) { console.error("Search synthesis failed:", e.message); }
-    }
-    if (!answer) {
-      answer = `I found ${articles.length} recent news reports related to "${query}", but I could not generate a reliable summary. Here are the retrieved reports; open the sources to verify the details.`;
-    }
-    return json({
-      answer,
-      sources: articles.map(a => ({ title: a.title, publisher: a.publisher, published: a.published, url: a.url, snippet: a.description })),
-      search_queries: [query],
-      provider: "Google News"
+    const response = await fetch("https://html.duckduckgo.com/html/?" + new URLSearchParams({q:query}), {
+      headers: {"User-Agent":"Mozilla/5.0 (compatible; JARVIS-AI/1.0)","Accept":"text/html"},
+      signal: AbortSignal.timeout(15000)
     });
-  } catch (e) {
-    console.error("JARVIS live search error:", e.message);
-    return error("Live news search is temporarily unavailable: " + String(e.message || e).slice(0, 220), 502);
-  }
-}
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    const html = await response.text();
+    for (const match of html.matchAll(/<div[^>]*class="[^"]*result[^"]*"[^>]*>([\s\S]*?)(?=<div[^>]*class="[^"]*result[^"]*"|$)/gi)) {
+      const block = match[1];
+      const anchor = block.match(/<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
+      if (!anchor) continue;
+      let url = decodeHtml(anchor[1]);
+      try { const parsed = new URL(url,"https://duckduckgo.com"); if(parsed.hostname.includes("duckduckgo.com") && parsed.searchParams.has("uddg")) url=parsed.searchParams.get("uddg"); } catch (_) {}
+      if (!/^https?:\/\//i.test(url) || /duckduckgo\.com/i.test(url)) continue;
+      const title = cleanHtml(anchor[2]);
+      const sm = block.match(/<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>|<div[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+      const snippet = cleanHtml(sm?.[1] || sm?.[2] || "");
+      if (title && !results.some(x=>x.url===url)) results.push({title,url,snippet,publisher:(()=>{try{return new URL(url).hostname.replace(/^www\./,"")}catch(_){return "Web"}})(),published:""});
+      if (results.length >= 8) break;
+    }
+  } catch(e) { errors.push("Web search: " + String(e.message||e)); }
 
+  // Add news reporting as a fallback or additional evidence.
+  if (results.length < 4) {
+    const freshness = /\b(latest|today|yesterday|this week|breaking|current|recent|news|review|reviews|released|release|202[5-9])\b/i.test(query) ? " when:30d" : "";
+    const feeds = [
+      {provider:"Google News",url:"https://news.google.com/rss/search?"+new URLSearchParams({q:query+freshness,hl:"en-ZA",gl:"ZA",ceid:"ZA:en"})},
+      {provider:"Bing News",url:"https://www.bing.com/news/search?"+new URLSearchParams({q:query,format:"rss",setlang:"en-ZA",cc:"ZA"})}
+    ];
+    for(const feed of feeds) {
+      try {
+        const response=await fetch(feed.url,{headers:{"Accept":"application/rss+xml, application/xml, text/xml","User-Agent":"Mozilla/5.0 (compatible; JARVIS-AI/1.0)"},signal:AbortSignal.timeout(12000)});
+        if(!response.ok) throw new Error("HTTP "+response.status);
+        const xml=await response.text();
+        for(const match of xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)) {
+          const item=match[1],title=xmlText(item,"title"),url=xmlText(item,"link");
+          if(!title||!/^https?:\/\//i.test(url)||results.some(a=>a.url===url||a.title.toLowerCase()===title.toLowerCase())) continue;
+          results.push({title,url,publisher:xmlText(item,"source")||feed.provider,published:xmlText(item,"pubDate"),snippet:xmlText(item,"description").slice(0,700)});
+          if(results.length>=8) break;
+        }
+      } catch(e) { errors.push(feed.provider+": "+String(e.message||e)); }
+      if(results.length>=8) break;
+    }
+  }
+  if(!results.length) throw new Error("Web search returned no usable results. "+errors.join("; ").slice(0,250));
+
+  // Fetch pages where possible, so synthesis uses article content as well as snippets.
+  const pages=await Promise.all(results.slice(0,6).map(async item=>{
+    try {
+      const response=await fetch(item.url,{headers:{"User-Agent":"Mozilla/5.0 (compatible; JARVIS-AI/1.0)","Accept":"text/html,application/xhtml+xml"},redirect:"follow",signal:AbortSignal.timeout(9000)});
+      if(!response.ok) return item;
+      const type=response.headers.get("content-type")||"";
+      if(!type.includes("html")&&!type.includes("text")) return item;
+      const html=(await response.text()).slice(0,180000);
+      const title=(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1];
+      return {...item,title:title?cleanHtml(title):item.title,page_text:cleanHtml(html).slice(0,5200)};
+    } catch(_) { return item; }
+  }));
+  const evidence=pages.map((a,i)=>"["+(i+1)+"] "+a.title+"\nPublisher: "+a.publisher+(a.published?"\nPublished: "+a.published:"")+"\nURL: "+a.url+"\nSearch snippet: "+(a.snippet||"")+"\nPage content: "+(a.page_text||"Page unavailable; rely only on title and snippet.")).join("\n\n");
+  let answer="";
+  if(configured(env,"GEMINI_API_KEY")) {
+    const prompt="You are JARVIS, the user's personal assistant. Answer the user's actual question using the retrieved web evidence. Do not dump a list of search results.\n\nUSER QUESTION: "+query+"\n\nWEB EVIDENCE:\n"+evidence+"\n\nRules:\n- Start with a direct answer. For reviews, report consensus and scores only when present in evidence; distinguish critic and user scores.\n- Use fetched page content where available; never pretend snippets are full articles.\n- Cite factual claims inline as [1], [2], etc.\n- Include publication dates when available; distinguish old from current information.\n- Compare sources and explain disagreements.\n- Never invent facts, scores, dates, prices, quotes or conclusions.\n- Retrieved current evidence takes priority over outdated training knowledge.\n- If evidence is insufficient, say what is missing.\n- Be conversational, intelligent, concise and naturally JARVIS-like. Address the user as sir occasionally.\n- Synthesise the evidence into an answer; do not output raw search results.";
+    try {
+      const data=await fetchJson("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key="+encodeURIComponent(env.GEMINI_API_KEY),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{role:"user",parts:[{text:prompt}]}],generationConfig:{temperature:0.2,maxOutputTokens:2200}})},45000);
+      answer=(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||"").join("").trim();
+    } catch(e) { console.error("JARVIS search synthesis failed:",e.message); }
+  }
+  if(!answer) answer="I found web sources for your question, sir, but my answer-generation service is unavailable. I will not pretend to have analysed them. Please try again shortly.";
+  return json({answer,sources:pages.map(a=>({title:a.title,publisher:a.publisher,published:a.published,url:a.url,snippet:a.snippet||""})),search_queries:[query],provider:"DuckDuckGo Web Search"});
+}
 
 // Account security and cloud-synced personal data.
 const encoder = new TextEncoder();
