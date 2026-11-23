@@ -162,7 +162,7 @@ async def receiver_socket(websocket: WebSocket, device_id: str, authorization: O
 
 @router.post("/command")
 async def send_tv_command(req: TVCommand, authorization: Optional[str] = Header(default=None)):
-    """Relay one allowlisted action and wait briefly for the TV's execution ACK."""
+    """Relay an allowlisted action immediately; the persistent TV socket handles execution."""
     token = _bearer_token(authorization)
     device = _devices.get(req.device_id)
     if not device or not device.get("paired") or not hmac.compare_digest(
@@ -174,24 +174,16 @@ async def send_tv_command(req: TVCommand, authorization: Optional[str] = Header(
     if socket is None:
         raise HTTPException(status_code=503, detail="The TV receiver is currently offline.")
 
-    command_id = str(uuid.uuid4())
-    future = asyncio.get_running_loop().create_future()
-    _pending_acks[command_id] = future
     try:
+        command_id = str(uuid.uuid4())
         await socket.send_json({"type": "command", "id": command_id, "action": req.action})
-        try:
-            result = await asyncio.wait_for(future, timeout=COMMAND_ACK_TIMEOUT_SECONDS)
-        except asyncio.TimeoutError:
-            raise HTTPException(status_code=504, detail="The TV did not acknowledge the command in time.")
-        if not result["ok"]:
-            raise HTTPException(status_code=502, detail=result["detail"] or "The TV could not execute that action.")
-        return {"sent": True, "executed": True, "action": req.action}
-    except HTTPException:
-        raise
+        # Do not hold the phone's HTTP request open for a second network round trip
+        # and an Android accessibility execution acknowledgement.
+        return {"sent": True, "executed": None, "action": req.action}
     except Exception:
+        if device.get("socket") is socket:
+            device["socket"] = None
         raise HTTPException(status_code=503, detail="The connection to the TV was interrupted.")
-    finally:
-        _pending_acks.pop(command_id, None)
 
 
 @router.get("/status/{device_id}")
