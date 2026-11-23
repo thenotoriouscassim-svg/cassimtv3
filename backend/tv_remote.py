@@ -118,8 +118,9 @@ async def claim_pairing(req: PairClaim, request: Request):
 
 
 @router.websocket("/receiver/{device_id}")
-async def receiver_socket(websocket: WebSocket, device_id: str, token: str = ""):
+async def receiver_socket(websocket: WebSocket, device_id: str, authorization: Optional[str] = Header(default=None)):
     """Persistent connection held open by the TV receiver."""
+    token = authorization[7:].strip() if authorization and authorization.startswith("Bearer ") else ""
     device = _devices.get(device_id)
     if not device or not hmac.compare_digest(
         str(device.get("receiver_token") or ""), token
