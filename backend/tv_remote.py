@@ -12,7 +12,7 @@ import time
 import uuid
 from typing import Dict, Literal, Optional
 
-from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/tv", tags=["Cassim TV Remote"])
@@ -98,12 +98,12 @@ async def start_pairing():
 
 
 @router.post("/pair/claim")
-async def claim_pairing(req: PairClaim, authorization: Optional[str] = Header(default=None)):
+async def claim_pairing(req: PairClaim, request: Request):
     """Called by the phone after the user enters the code shown on the TV."""
     # Rate limit by a supplied client bearer identity when available. The
     # six-digit code is one-time and expires quickly; the phone receives a
     # separate high-entropy token after successful pairing.
-    _check_pair_rate_limit("global")
+    _check_pair_rate_limit(request.client.host if request.client else "unknown")
     _clean_expired_pairs()
     device_id = _pair_codes.get(req.code)
     device = _devices.get(device_id or "")
@@ -121,7 +121,7 @@ async def claim_pairing(req: PairClaim, authorization: Optional[str] = Header(de
 async def receiver_socket(websocket: WebSocket, device_id: str, token: str = ""):
     """Persistent connection held open by the TV receiver."""
     device = _devices.get(device_id)
-    if not device or not device.get("paired") or not hmac.compare_digest(
+    if not device or not hmac.compare_digest(
         str(device.get("receiver_token") or ""), token
     ):
         await websocket.close(code=1008)
