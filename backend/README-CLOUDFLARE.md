@@ -1,53 +1,53 @@
 # JARVIS AI by CassimTV — Cloudflare Workers
 
-This directory contains the Cloudflare Python Workers entrypoint for the existing FastAPI backend.
+The production JARVIS API is the Cloudflare-native JavaScript Worker in `worker.js`.
+It preserves the Flutter app's API routes without Python/FastAPI cold-start overhead.
 
-## Cloudflare Worker settings
+## Cloudflare Worker
 
 - Worker name: `jarvis-ai-cassimtv`
 - Root directory: `backend`
-- Main module: `worker.py` (configured in `wrangler.jsonc`)
-- Runtime: Python Workers with FastAPI ASGI adapter
+- Main module: `worker.js`
+- Runtime: JavaScript Modules
 - Build command: leave blank
-- Deploy command:
+- Deploy command: `npx wrangler deploy`
 
-```sh
-curl -LsSf https://astral.sh/uv/install.sh | sh && "$HOME/.local/bin/uv" run pywrangler deploy
-```
+The Workers Builds project connects to `thenotoriouscassim-svg/cassimtv3` on branch `main`.
 
-The Workers Builds project should connect to the GitHub repository
-`thenotoriouscassim-svg/cassimtv3` on branch `main`.
+## D1 account storage
+
+The Worker requires a D1 binding named `DB` pointing to `jarvis-accounts`.
+The database contains the `users`, `sessions`, `chats`, `messages`, and `memories` tables.
+The production binding is defined in `wrangler.jsonc`.
 
 ## Runtime secrets
 
-Add these under the Worker **Settings → Variables and Secrets** as encrypted secrets:
+Configure these under Worker **Settings → Variables and Secrets** as encrypted secrets:
 
-- `GEMINI_API_KEY` — required for normal chat and Gemini web search
-- `GROQ_API_KEY` — optional JARVIS v1
-- `NVIDIA_API_KEY` — optional JARVIS v2
+- `GEMINI_API_KEY` — required for normal JARVIS v3 chat and search synthesis
+- `GROQ_API_KEY` — optional JARVIS v1 and speech transcription
+- `NVIDIA_API_KEY` — optional JARVIS v2 and advanced coding
 - `OPENROUTER_API_KEY` — optional JARVIS v4
-- `ZAI_API_KEY` — required for the separate coding endpoint
+- `ZAI_API_KEY` — required for standard coding
 - `FISH_API_KEY` — required for speech generation
 - `FISH_AUDIO_VOICE_ID` — required for the selected JARVIS voice
 
-Optional non-secret variable:
+Optional non-secret variables: `FISH_AUDIO_MODEL`, `GROQ_MODEL`, `NVIDIA_MODEL`, `OPENROUTER_MODEL`, `ZAI_CODE_MODEL`, and `NVIDIA_ADVANCED_CODE_MODEL`.
 
-- `FISH_AUDIO_MODEL` — defaults to `s2.1-pro-free`
-- `GROQ_MODEL`, `NVIDIA_MODEL`, `OPENROUTER_MODEL` — optional model overrides
+Never put API keys in `wrangler.jsonc`, GitHub commits, or chat messages.
 
-Do not put API keys in `wrangler.jsonc`, GitHub commits, or chat messages.
-The Worker entrypoint bridges Cloudflare's `workers.env` bindings into the
-shared backend configuration before importing the FastAPI app.
+## API smoke tests
 
-## Compatibility notes
+After deployment, verify:
 
-- Render continues using `requirements.txt` and `psutil`; the Render deployment is not replaced by these files.
-- Cloudflare Workers does not expose host CPU, RAM, or disk counters. The shared `/stats` route returns null for those fields on Workers rather than inventing values.
-- The Android device bridge remains on the phone and is unchanged.
-- The `/chat` route accepts JARVIS v1 (Groq), v2 (NVIDIA), v3 (existing Gemini Flash-Lite), v4 (OpenRouter), or `auto` (first successful configured provider). The separate `/code` route remains the Z.ai coding endpoint.
-- `auto` sends the same request concurrently to every configured provider and returns the first complete successful answer. This can consume more than one provider request per user message.
-- Test `/health`, `/chat`, `/code`, `/search`, and `/tts` before changing the Android app's backend URL.
+- `GET /health`
+- `GET /diagnostics`
+- `GET /models`
+- `POST /chat`
+- `GET /auth/me`
+- `GET /chats`
+- `GET /memories`
 
-## Free-plan limitation
+## Runtime note
 
-Cloudflare Workers Free has a 10 ms CPU-time allowance per request. Network waiting is separate from CPU time, but Python/FastAPI startup and request processing must still fit. Confirm this with live endpoint tests before moving production traffic.
+The previous Python/FastAPI entrypoint exceeded the Cloudflare Workers Free CPU-time allowance during dependency imports. Production now uses the JavaScript Worker entrypoint. Keep `wrangler.jsonc` pointed at `worker.js`; do not deploy `worker.py` for the JARVIS API.
