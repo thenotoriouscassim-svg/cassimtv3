@@ -65,6 +65,8 @@ VOICE AND DEVICE CAPABILITY:
 You are JARVIS AI by CassimTV. Never claim access to files, sensors, or accounts unless a connected capability actually provides it. Never disclose or name internal AI providers, model names, APIs, backend infrastructure, or implementation details. If asked how you work, explain briefly that the app handles supported device functions locally while the assistant's reasoning runs remotely, without naming providers."""
 
 app = FastAPI(title="JARVIS AI by CassimTV", version="1.2.0-cloud")
+from tv_remote import router as tv_remote_router
+app.include_router(tv_remote_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -98,7 +100,6 @@ async def health():
 
 class SearchRequest(BaseModel):
     query: str = Field(min_length=2, max_length=1000)
-
 
 class _DuckDuckGoResultsParser(HTMLParser):
     """Extract ordinary DuckDuckGo HTML result titles, links and snippets."""
@@ -197,8 +198,7 @@ async def _search_without_gemini(query: str):
                     lines.append("")
                 return {
                     "answer": "\\n".join(lines).strip(),
-                    "sources": unique,
-                    "search_queries": [query],
+                    "sources": unique,                    "search_queries": [query],
                     "provider": provider,
                 }
             failures.append(f"{provider}: no parseable results")
@@ -297,8 +297,7 @@ async def live_search(req: SearchRequest):
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=8.0, read=22.0)) as client:
                 response = await client.post(url, params={"key": GEMINI_API_KEY}, json=payload)
-            if response.status_code >= 400:
-                try:
+            if response.status_code >= 400:                try:
                     error_data = response.json().get("error", {})
                     detail = error_data.get("message", "The search provider rejected the request.")
                     error_status = error_data.get("status", "")
@@ -397,8 +396,7 @@ Never reveal internal model, provider, API, key, or server implementation detail
                         "Content-Type": "application/json",
                     },
                     json=payload,
-                )
-                upstream = await client.send(request, stream=True)
+                )                upstream = await client.send(request, stream=True)
                 if upstream.status_code < 400:
                     model_succeeded = True
                     break
@@ -497,8 +495,7 @@ async def _call_gemini(req: ChatRequest):
     for message in _chat_messages(req):
         role = "model" if message["role"] in ("assistant", "system") else "user"
         if message["role"] == "system":
-            continue
-        contents.append({"role": role, "parts": [{"text": message["content"]}]})
+            continue        contents.append({"role": role, "parts": [{"text": message["content"]}]})
     system_text = _chat_messages(req)[0]["content"]
     payload = {
         "system_instruction": {"parts": [{"text": system_text}]},
@@ -597,8 +594,7 @@ async def model_status():
                 bool(os.getenv("NVIDIA_API_KEY", "").strip()),
                 bool(GEMINI_API_KEY),
                 bool(os.getenv("OPENROUTER_API_KEY", "").strip()),
-            ])},
-        ],
+            ])},        ],
         "coding": {"configured": bool(ZAI_API_KEY), "model": ZAI_CODE_MODEL},
     }
 
@@ -697,8 +693,7 @@ async def text_to_speech(req: VoiceRequest):
     except HTTPException:
         raise
     except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Fish Audio voice generation timed out.")
-    except httpx.HTTPError:
+        raise HTTPException(status_code=504, detail="Fish Audio voice generation timed out.")    except httpx.HTTPError:
         raise HTTPException(status_code=502, detail="Could not reach Fish Audio.")
 
 
